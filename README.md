@@ -1,7 +1,7 @@
 # Ratio EV Charging — Home Assistant Integration
 
 Home Assistant integration for [Ratio](https://ratio.energy/) EV chargers,
-backed by the [`aioratio`](https://github.com/tim-iosharp/aioratio) async
+backed by the [`aioratio`](https://github.com/aaearon/aioratio) async
 client library.
 
 ## Status
@@ -13,7 +13,7 @@ Early scaffold. Entities will be refined against live captures.
 ### HACS (custom repository)
 
 1. HACS → Integrations → three-dot menu → Custom repositories.
-2. Add `https://github.com/tim-iosharp/home-assistant-ratio` as type
+2. Add `https://github.com/aaearon/home-assistant-ratio` as type
    "Integration".
 3. Install "Ratio EV Charging".
 4. Restart Home Assistant.
