@@ -82,10 +82,11 @@ def _client_and_coordinator(
 
 
 async def _handle_start_charge(hass: HomeAssistant, call: ServiceCall) -> None:
-    vehicle_id = call.data.get(ATTR_VEHICLE_ID)
+    explicit_vehicle = call.data.get(ATTR_VEHICLE_ID)
     for entry_id, serial in _resolve_serials(hass, call):
         client, coordinator = _client_and_coordinator(hass, entry_id)
         kwargs: dict[str, Any] = {}
+        vehicle_id = explicit_vehicle or coordinator.preferred_vehicle.get(serial)
         if vehicle_id is not None:
             kwargs["vehicle_id"] = vehicle_id
         await coordinator.request_command(client.start_charge, serial, **kwargs)
