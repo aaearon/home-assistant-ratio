@@ -9,6 +9,7 @@ from aioratio import RatioClient
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -72,6 +73,15 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start a charge session."""
+        if self.is_on is True:
+            return
+        status = self._charger_status()
+        if status is not None and not status.is_charge_start_allowed:
+            ind = status.indicators
+            state = ind.charging_state if ind is not None else "unknown"
+            raise HomeAssistantError(
+                f"charger reports start not allowed (state={state})"
+            )
         call_kwargs: dict[str, Any] = {}
         preferred = self.coordinator.preferred_vehicle.get(self._serial)
         if preferred is not None:
@@ -82,6 +92,21 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop the active charge session."""
+        if self.is_on is False:
+            return
+        status = self._charger_status()
+        if status is not None and not status.is_charge_stop_allowed:
+            ind = status.indicators
+            state = ind.charging_state if ind is not None else "unknown"
+            raise HomeAssistantError(
+                f"charger reports stop not allowed (state={state})"
+            )
         await self.coordinator.request_command(
             self._client.stop_charge, self._serial
         )
+
+    def _charger_status(self):
+        if self.coordinator.data is None:
+            return None
+        ov = self.coordinator.data.chargers.get(self._serial)
+        return ov.charger_status if ov is not None else None
