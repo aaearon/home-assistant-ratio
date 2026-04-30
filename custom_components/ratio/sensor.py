@@ -38,9 +38,6 @@ SENSOR_DESCRIPTIONS: tuple[RatioSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
-        # TODO: confirm against live payload — APK field is in W per
-        # ChargeSessionStatus.actualChargingPower; if cloud returns kW,
-        # adjust unit.
         value_fn=lambda ov: (
             ov.charge_session_status.actual_charging_power
             if ov.charge_session_status is not None
@@ -63,9 +60,6 @@ SENSOR_DESCRIPTIONS: tuple[RatioSensorEntityDescription, ...] = (
             else None
         ),
     ),
-    # TODO: add current/voltage/session-energy/total-energy once live
-    # payload confirms the field paths — they were not present on
-    # ChargerOverview / Indicators in the APK-derived models.
 )
 
 
