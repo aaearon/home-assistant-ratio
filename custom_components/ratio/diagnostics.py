@@ -47,8 +47,20 @@ async def async_get_config_entry_diagnostics(
     # data is keyed by charger serial, so emit as a list to avoid leaking
     # serials as top-level keys; serial_number inside each entry is in
     # TO_REDACT and gets redacted normally.
-    raw_data = [_to_jsonable(ov) for ov in (coordinator.data or {}).values()]
+    data = coordinator.data
+    chargers = [_to_jsonable(ov) for ov in data.chargers.values()] if data else []
+    user_settings = (
+        [_to_jsonable(s) for s in data.user_settings.values()] if data else []
+    )
+    vehicles = [_to_jsonable(v) for v in data.vehicles] if data else []
     return {
         "entry_data": async_redact_data(dict(entry.data), TO_REDACT),
-        "coordinator_data": async_redact_data(raw_data, TO_REDACT),
+        "coordinator_data": async_redact_data(
+            {
+                "chargers": chargers,
+                "user_settings": user_settings,
+                "vehicles": vehicles,
+            },
+            TO_REDACT,
+        ),
     }

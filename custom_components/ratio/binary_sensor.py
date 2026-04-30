@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from aioratio.models import ChargerOverview
 
@@ -12,7 +12,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -26,6 +26,7 @@ class RatioBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Describes a Ratio binary sensor."""
 
     value_fn: Callable[[ChargerOverview], bool | None]
+    attrs_fn: Callable[[ChargerOverview], dict[str, Any]] | None = None
 
 
 def _ind(ov: ChargerOverview):
@@ -66,7 +67,39 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, ...] = (
             bool(_ind(ov).errors) if _ind(ov) is not None else None
         ),
     ),
+    RatioBinarySensorEntityDescription(
+        key="charging_disabled",
+        translation_key="charging_disabled",
+        name="Charging disabled",
+        value_fn=lambda ov: (_ind(ov).is_charging_disabled if _ind(ov) else None),
+        attrs_fn=lambda ov: (
+            {"reason": _ind(ov).is_charging_disabled_reason}
+            if _ind(ov) is not None and _ind(ov).is_charging_disabled_reason is not None
+            else {}
+        ),
+    ),
+    RatioBinarySensorEntityDescription(
+        key="charging_authorized",
+        translation_key="charging_authorized",
+        name="Charging authorized",
+        value_fn=lambda ov: (_ind(ov).is_charging_authorized if _ind(ov) else None),
+    ),
+    RatioBinarySensorEntityDescription(
+        key="power_reduced_by_dso",
+        translation_key="power_reduced_by_dso",
+        name="Power reduced by DSO",
+        value_fn=lambda ov: (_ind(ov).is_power_reduced_by_dso if _ind(ov) else None),
+    ),
 )
+
+
+def _build_binary_sensor_entities(
+    coordinator: RatioCoordinator, serial: str
+) -> list["RatioBinarySensor"]:
+    return [
+        RatioBinarySensor(coordinator, serial, desc)
+        for desc in BINARY_SENSOR_DESCRIPTIONS
+    ]
 
 
 async def async_setup_entry(
@@ -76,11 +109,23 @@ async def async_setup_entry(
 ) -> None:
     """Set up Ratio binary sensors from a config entry."""
     coordinator: RatioCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    entities: list[RatioBinarySensor] = []
-    for serial in coordinator.data or {}:
-        for desc in BINARY_SENSOR_DESCRIPTIONS:
-            entities.append(RatioBinarySensor(coordinator, serial, desc))
-    async_add_entities(entities)
+    known: set[str] = set()
+
+    @callback
+    def _add_new() -> None:
+        if coordinator.data is None:
+            return
+        new = set(coordinator.data.chargers) - known
+        if not new:
+            return
+        entities: list[RatioBinarySensor] = []
+        for serial in new:
+            entities.extend(_build_binary_sensor_entities(coordinator, serial))
+        known.update(new)
+        async_add_entities(entities)
+
+    _add_new()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
 class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity):
@@ -108,10 +153,25 @@ class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity)
 
     @property
     def is_on(self) -> bool | None:
-        ov = (self.coordinator.data or {}).get(self._serial)
+        if self.coordinator.data is None:
+            return None
+        ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None:
             return None
         try:
             return self.entity_description.value_fn(ov)
+        except AttributeError:
+            return None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        attrs_fn = self.entity_description.attrs_fn
+        if attrs_fn is None or self.coordinator.data is None:
+            return None
+        ov = self.coordinator.data.chargers.get(self._serial)
+        if ov is None:
+            return None
+        try:
+            return attrs_fn(ov) or None
         except AttributeError:
             return None

@@ -38,9 +38,6 @@ SENSOR_DESCRIPTIONS: tuple[RatioSensorEntityDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
-        # TODO: confirm against live payload — APK field is in W per
-        # ChargeSessionStatus.actualChargingPower; if cloud returns kW,
-        # adjust unit.
         value_fn=lambda ov: (
             ov.charge_session_status.actual_charging_power
             if ov.charge_session_status is not None
@@ -63,10 +60,13 @@ SENSOR_DESCRIPTIONS: tuple[RatioSensorEntityDescription, ...] = (
             else None
         ),
     ),
-    # TODO: add current/voltage/session-energy/total-energy once live
-    # payload confirms the field paths — they were not present on
-    # ChargerOverview / Indicators in the APK-derived models.
 )
+
+
+def _build_sensor_entities(
+    coordinator: RatioCoordinator, serial: str
+) -> list[RatioSensor]:
+    return [RatioSensor(coordinator, serial, desc) for desc in SENSOR_DESCRIPTIONS]
 
 
 async def async_setup_entry(
@@ -76,11 +76,23 @@ async def async_setup_entry(
 ) -> None:
     """Set up Ratio sensors from a config entry."""
     coordinator: RatioCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    entities: list[RatioSensor] = []
-    for serial in coordinator.data or {}:
-        for desc in SENSOR_DESCRIPTIONS:
-            entities.append(RatioSensor(coordinator, serial, desc))
-    async_add_entities(entities)
+    known: set[str] = set()
+
+    @callback
+    def _add_new() -> None:
+        if coordinator.data is None:
+            return
+        new = set(coordinator.data.chargers) - known
+        if not new:
+            return
+        entities: list[RatioSensor] = []
+        for serial in new:
+            entities.extend(_build_sensor_entities(coordinator, serial))
+        known.update(new)
+        async_add_entities(entities)
+
+    _add_new()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
 class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
@@ -108,7 +120,9 @@ class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
 
     @property
     def _overview(self) -> ChargerOverview | None:
-        return (self.coordinator.data or {}).get(self._serial)
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.chargers.get(self._serial)
 
     @property
     def native_value(self) -> Any:

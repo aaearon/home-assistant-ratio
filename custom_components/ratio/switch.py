@@ -8,7 +8,8 @@ from aioratio import RatioClient
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -28,12 +29,21 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: RatioCoordinator = data["coordinator"]
     client: RatioClient = data["client"]
+    known: set[str] = set()
 
-    entities = [
-        RatioChargingSwitch(coordinator, client, serial)
-        for serial in (coordinator.data or {})
-    ]
-    async_add_entities(entities)
+    @callback
+    def _add_new() -> None:
+        if coordinator.data is None:
+            return
+        new = set(coordinator.data.chargers) - known
+        if not new:
+            return
+        entities = [RatioChargingSwitch(coordinator, client, serial) for serial in new]
+        known.update(new)
+        async_add_entities(entities)
+
+    _add_new()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
 class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
@@ -62,7 +72,9 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
 
     @property
     def is_on(self) -> bool | None:
-        ov = (self.coordinator.data or {}).get(self._serial)
+        if self.coordinator.data is None:
+            return None
+        ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None or ov.charger_status is None:
             return None
         ind = ov.charger_status.indicators
@@ -72,12 +84,40 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start a charge session."""
+        if self.is_on is True:
+            return
+        status = self._charger_status()
+        if status is not None and not status.is_charge_start_allowed:
+            ind = status.indicators
+            state = ind.charging_state if ind is not None else "unknown"
+            raise HomeAssistantError(
+                f"charger reports start not allowed (state={state})"
+            )
+        call_kwargs: dict[str, Any] = {}
+        preferred = self.coordinator.preferred_vehicle.get(self._serial)
+        if preferred is not None:
+            call_kwargs["vehicle_id"] = preferred
         await self.coordinator.request_command(
-            self._client.start_charge, self._serial
+            self._client.start_charge, self._serial, **call_kwargs
         )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Stop the active charge session."""
+        if self.is_on is False:
+            return
+        status = self._charger_status()
+        if status is not None and not status.is_charge_stop_allowed:
+            ind = status.indicators
+            state = ind.charging_state if ind is not None else "unknown"
+            raise HomeAssistantError(
+                f"charger reports stop not allowed (state={state})"
+            )
         await self.coordinator.request_command(
             self._client.stop_charge, self._serial
         )
+
+    def _charger_status(self):
+        if self.coordinator.data is None:
+            return None
+        ov = self.coordinator.data.chargers.get(self._serial)
+        return ov.charger_status if ov is not None else None

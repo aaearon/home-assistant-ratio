@@ -37,7 +37,10 @@
       "vehicle_connected": { "name": "Vehicle connected" },
       "charge_session_active": { "name": "Charging" },
       "charging_paused": { "name": "Charging paused" },
-      "error": { "name": "Error" }
+      "error": { "name": "Error" },
+      "charging_disabled": { "name": "Charging disabled" },
+      "charging_authorized": { "name": "Charging authorized" },
+      "power_reduced_by_dso": { "name": "Power reduced by DSO" }
     },
     "switch": {
       "charging": { "name": "Charging" }
