@@ -29,10 +29,8 @@ async def async_setup_entry(
     coordinator: RatioCoordinator = data["coordinator"]
     client: RatioClient = data["client"]
 
-    entities = [
-        RatioChargingSwitch(coordinator, client, serial)
-        for serial in (coordinator.data or {})
-    ]
+    serials = coordinator.data.chargers if coordinator.data else {}
+    entities = [RatioChargingSwitch(coordinator, client, serial) for serial in serials]
     async_add_entities(entities)
 
 
@@ -62,7 +60,9 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
 
     @property
     def is_on(self) -> bool | None:
-        ov = (self.coordinator.data or {}).get(self._serial)
+        if self.coordinator.data is None:
+            return None
+        ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None or ov.charger_status is None:
             return None
         ind = ov.charger_status.indicators

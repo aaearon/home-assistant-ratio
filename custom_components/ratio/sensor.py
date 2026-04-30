@@ -77,7 +77,7 @@ async def async_setup_entry(
     """Set up Ratio sensors from a config entry."""
     coordinator: RatioCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     entities: list[RatioSensor] = []
-    for serial in coordinator.data or {}:
+    for serial in coordinator.data.chargers if coordinator.data else {}:
         for desc in SENSOR_DESCRIPTIONS:
             entities.append(RatioSensor(coordinator, serial, desc))
     async_add_entities(entities)
@@ -108,7 +108,9 @@ class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
 
     @property
     def _overview(self) -> ChargerOverview | None:
-        return (self.coordinator.data or {}).get(self._serial)
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.chargers.get(self._serial)
 
     @property
     def native_value(self) -> Any:

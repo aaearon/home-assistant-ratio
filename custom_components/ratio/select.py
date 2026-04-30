@@ -33,7 +33,8 @@ async def async_setup_entry(
     client: RatioClient = data["client"]
 
     entities: list[CoordinatorEntity] = []
-    for serial in coordinator.data or {}:
+    serials = coordinator.data.chargers if coordinator.data else {}
+    for serial in serials:
         entities.append(RatioChargeModeSelect(coordinator, client, serial))
         entities.append(RatioActiveVehicleSelect(coordinator, client, serial))
     async_add_entities(entities)
@@ -116,7 +117,9 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
 
     @property
     def current_option(self) -> str | None:
-        ov = (self.coordinator.data or {}).get(self._serial)
+        if self.coordinator.data is None:
+            return None
+        ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None or ov.charge_session_status is None:
             return None
         return ov.charge_session_status.vehicle_id
