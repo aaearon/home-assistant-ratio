@@ -72,8 +72,12 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start a charge session."""
+        call_kwargs: dict[str, Any] = {}
+        preferred = self.coordinator.preferred_vehicle.get(self._serial)
+        if preferred is not None:
+            call_kwargs["vehicle_id"] = preferred
         await self.coordinator.request_command(
-            self._client.start_charge, self._serial
+            self._client.start_charge, self._serial, **call_kwargs
         )
 
     async def async_turn_off(self, **kwargs: Any) -> None:

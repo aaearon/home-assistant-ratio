@@ -1,8 +1,4 @@
-"""Select platform for Ratio EV Charging.
-
-Skeletons only — full implementation requires live payload to confirm
-allowed-value sets and the exact mutator surface on RatioClient.
-"""
+"""Select platform for Ratio EV Charging."""
 from __future__ import annotations
 
 import logging
@@ -20,6 +16,10 @@ from .const import DOMAIN
 from .coordinator import RatioCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+# The cloud may omit allowedValues for chargingMode; this fallback mirrors
+# the modes seen in the APK. Update if Ratio adds modes.
+_CHARGE_MODE_FALLBACK = ["FAST", "SOLAR", "SMART_SOLAR"]
 
 
 async def async_setup_entry(
@@ -65,17 +65,10 @@ class _RatioSelectBase(CoordinatorEntity[RatioCoordinator], SelectEntity):
 
 
 class RatioChargeModeSelect(_RatioSelectBase):
-    """Select for the charging mode (e.g. NORMAL / SOLAR / SCHEDULED).
-
-    # TODO: populate options from UserSettings.charging_mode.allowed_values
-    # once user_settings() is fetched at setup. Skeleton only — current_option
-    # / async_select_option will be wired when client.set_user_settings()
-    # lands.
-    """
+    """Select for the charging mode."""
 
     _attr_translation_key = "charge_mode"
     _attr_name = "Charge mode"
-    _attr_options: list[str] = []
 
     def __init__(
         self,
@@ -86,26 +79,41 @@ class RatioChargeModeSelect(_RatioSelectBase):
         super().__init__(coordinator, client, serial, "charge_mode")
 
     @property
+    def options(self) -> list[str]:
+        if self.coordinator.data is None:
+            return list(_CHARGE_MODE_FALLBACK)
+        settings = self.coordinator.data.user_settings.get(self._serial)
+        if settings is None or settings.charging_mode is None:
+            return list(_CHARGE_MODE_FALLBACK)
+        return settings.charging_mode.allowed_values or list(_CHARGE_MODE_FALLBACK)
+
+    @property
     def current_option(self) -> str | None:
-        return None  # TODO: derive from cached UserSettings.
+        if self.coordinator.data is None:
+            return None
+        settings = self.coordinator.data.user_settings.get(self._serial)
+        if settings is None or settings.charging_mode is None:
+            return None
+        return settings.charging_mode.value
 
     async def async_select_option(self, option: str) -> None:
-        # TODO: call client.set_user_settings once the API is implemented.
-        _LOGGER.warning(
-            "set_user_settings not yet implemented; ignoring charge_mode=%s", option
+        await self.coordinator.request_command(
+            self._client.set_user_settings,
+            self._serial,
+            {"chargingMode": {"value": option}},
         )
 
 
 class RatioActiveVehicleSelect(_RatioSelectBase):
     """Select for the active vehicle.
 
-    # TODO: load vehicles via client.vehicles() at setup; map between
-    # vehicle_id and vehicle_name for display.
+    The cloud has no per-charger "default vehicle" setting; this is a
+    HA-side preference that is passed to the next start_charge call.
+    Held in memory on the coordinator (lost on HA restart).
     """
 
     _attr_translation_key = "active_vehicle"
     _attr_name = "Active vehicle"
-    _attr_options: list[str] = []
 
     def __init__(
         self,
@@ -115,18 +123,43 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
     ) -> None:
         super().__init__(coordinator, client, serial, "active_vehicle")
 
+    def _name_for(self, vehicle_id: str | None) -> str | None:
+        if vehicle_id is None or self.coordinator.data is None:
+            return None
+        for v in self.coordinator.data.vehicles:
+            if v.vehicle_id == vehicle_id:
+                return v.vehicle_name or v.vehicle_id
+        return vehicle_id
+
+    @property
+    def options(self) -> list[str]:
+        if self.coordinator.data is None:
+            return []
+        return [
+            (v.vehicle_name or v.vehicle_id)
+            for v in self.coordinator.data.vehicles
+            if v.vehicle_id is not None
+        ]
+
     @property
     def current_option(self) -> str | None:
+        preferred = self.coordinator.preferred_vehicle.get(self._serial)
+        if preferred is not None:
+            return self._name_for(preferred)
         if self.coordinator.data is None:
             return None
         ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None or ov.charge_session_status is None:
             return None
-        return ov.charge_session_status.vehicle_id
+        return self._name_for(ov.charge_session_status.vehicle_id)
 
     async def async_select_option(self, option: str) -> None:
-        # TODO: route through client.start_charge(vehicle_id=...) /
-        # set_active_vehicle once the API is implemented.
-        _LOGGER.warning(
-            "active_vehicle setter not yet implemented; ignoring vehicle=%s", option
-        )
+        if self.coordinator.data is None:
+            return
+        for v in self.coordinator.data.vehicles:
+            display = v.vehicle_name or v.vehicle_id
+            if display == option and v.vehicle_id is not None:
+                self.coordinator.preferred_vehicle[self._serial] = v.vehicle_id
+                self.async_write_ha_state()
+                return
+        _LOGGER.warning("active_vehicle option %s did not match any known vehicle", option)
