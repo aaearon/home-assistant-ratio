@@ -1,0 +1,64 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ratio EV Charging",
+        "description": "Sign in with the email and password you use in the Ratio mobile app.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate Ratio",
+        "description": "Re-enter the password for {email}.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid email or password.",
+      "cannot_connect": "Failed to connect to the Ratio cloud.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This Ratio account is already configured.",
+      "reauth_successful": "Re-authentication successful."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "actual_charging_power": { "name": "Charging power" },
+      "cloud_connection_state": { "name": "Cloud connection state" },
+      "charging_state": { "name": "Charging state" }
+    },
+    "binary_sensor": {
+      "vehicle_connected": { "name": "Vehicle connected" },
+      "charge_session_active": { "name": "Charging" },
+      "charging_paused": { "name": "Charging paused" },
+      "error": { "name": "Error" }
+    },
+    "switch": {
+      "charging": { "name": "Charging" }
+    },
+    "select": {
+      "charge_mode": { "name": "Charge mode" },
+      "active_vehicle": { "name": "Active vehicle" }
+    }
+  },
+  "services": {
+    "start_charge": {
+      "name": "Start charge",
+      "description": "Start a charge session on the targeted Ratio charger."
+    },
+    "stop_charge": {
+      "name": "Stop charge",
+      "description": "Stop the active charge session on the targeted Ratio charger."
+    },
+    "set_schedule": {
+      "name": "Set schedule",
+      "description": "Replace the weekly charge schedule for the targeted Ratio charger."
+    }
+  }
+}

@@ -1,0 +1,35 @@
+start_charge:
+  name: Start charge
+  description: Start a charge session on the targeted Ratio charger.
+  target:
+    device:
+      integration: ratio
+  fields:
+    vehicle_id:
+      name: Vehicle ID
+      description: Optional vehicle ID to associate with the session.
+      required: false
+      example: "abc-123"
+      selector:
+        text:
+
+stop_charge:
+  name: Stop charge
+  description: Stop the active charge session on the targeted Ratio charger.
+  target:
+    device:
+      integration: ratio
+
+set_schedule:
+  name: Set schedule
+  description: Replace the weekly charge schedule for the targeted Ratio charger.
+  target:
+    device:
+      integration: ratio
+  fields:
+    slots:
+      name: Slots
+      description: List of schedule slots.
+      required: true
+      selector:
+        object:
