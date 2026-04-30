@@ -1,7 +1,7 @@
 {
   "domain": "ratio",
   "name": "Ratio EV Charging",
-  "version": "0.4.0",
+  "version": "0.2.0",
   "codeowners": ["@aaearon"],
   "config_flow": true,
   "documentation": "https://github.com/aaearon/home-assistant-ratio",

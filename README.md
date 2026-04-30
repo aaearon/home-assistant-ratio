@@ -13,7 +13,7 @@ This is an unofficial integration. Not affiliated with Ratio.
 
 ## Status
 
-Early. Auth, polling, and start/stop have been smoke-tested against a real charger. Some entity field paths and select dropdowns are TODO pending live refinement — see [Known limitations](#known-limitations).
+Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, and dynamic charger discovery have been smoke-tested against a real charger. See [Known limitations](#known-limitations) for the remaining caveats.
 
 ## Why a new integration
 
@@ -41,13 +41,13 @@ One device per charger, with the following entities:
 
 | Platform | Entity | Source |
 |---|---|---|
-| sensor | `actual_charging_power` | `charge_session_status.actual_charging_power` |
+| sensor | `actual_charging_power` (W) | `charge_session_status.actual_charging_power` |
 | sensor | `cloud_connection_state` | `cloud_connection_state` |
 | sensor | `charging_state` | `charger_status.indicators.charging_state` |
-| binary_sensor | `vehicle_connected`, `charge_session_active`, `charging_paused`, `error` | derived from `charger_status` / `charge_session_status` |
-| switch | `charging` | `start_charge` / `stop_charge` |
-| select | `charge_mode` (skeleton — TODO) | TODO — planned source: `user_settings.charging_mode` |
-| select | `active_vehicle` (skeleton — TODO) | TODO — planned source: `vehicles()` |
+| binary_sensor | `vehicle_connected`, `charge_session_active`, `charging_paused`, `error`, `charging_disabled` (with `reason` attribute), `charging_authorized`, `power_reduced_by_dso` | derived from `charger_status.indicators` |
+| switch | `charging` | `start_charge` / `stop_charge`, gated on `is_charge_start_allowed` / `is_charge_stop_allowed` |
+| select | `charge_mode` | `user_settings.charging_mode` (PUT via `set_user_settings`) |
+| select | `active_vehicle` | HA-side preference passed to the next `start_charge` (in-memory only) |
 
 Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle, regardless of how many chargers).
 
@@ -93,13 +93,9 @@ Target a specific charger via Home Assistant's device picker (`device_id`).
 
 ## Known limitations
 
-These are explicitly TODO and tracked as issues / PRs:
-
-- **Select entities are skeletons.** `charge_mode` and `active_vehicle` create the entities but options are empty and setters are no-ops. Use the services for now.
-- **Sensor coverage is conservative** until live payload captures confirm field availability/units. Power unit (W vs kW), session/total energy, current/voltage are not yet exposed if not present on the live `Indicators` model.
-- **Switch start/stop is not idempotent** and ignores `is_charge_start_allowed` / `is_charge_stop_allowed` from the model.
-- **Newly-added chargers** post-setup require an integration reload to get entities (no dynamic discovery yet).
-- **Rate-limit handling**: `RatioRateLimitError` (HTTP 429) currently surfaces as a generic update failure with no Retry-After backoff.
+- **Sensor coverage is bounded by the cloud API.** Voltage, current, and session/total energy are not exposed by the upstream `chargers_overview` endpoint and therefore not available as sensors. `actual_charging_power` is reported in watts.
+- **`active_vehicle` preference is not persisted.** Selecting a vehicle stores the choice in memory on the coordinator and passes it to the next `start_charge`. The selection is lost on Home Assistant restart; the entity then re-derives from the active session.
+- **`charge_mode` allowed values fall back to a hardcoded list** (`FAST`, `SOLAR`, `SMART_SOLAR`) when the cloud omits `allowedValues`. If Ratio adds modes the fallback will need updating.
 - **Password storage**: stored in HA config entry data and persisted in `.storage/core.config_entries` like other config entry data. It does not use `secrets.yaml`, and protection relies on Home Assistant host security rather than separate encryption in this integration.
 
 ## Diagnostics
