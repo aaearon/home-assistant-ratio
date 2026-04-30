@@ -43,9 +43,11 @@ async def async_get_config_entry_diagnostics(
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
     coordinator: RatioCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    raw_data = {
-        serial: _to_jsonable(ov) for serial, ov in (coordinator.data or {}).items()
-    }
+    # async_redact_data redacts by field name, not by dict key. Coordinator
+    # data is keyed by charger serial, so emit as a list to avoid leaking
+    # serials as top-level keys; serial_number inside each entry is in
+    # TO_REDACT and gets redacted normally.
+    raw_data = [_to_jsonable(ov) for ov in (coordinator.data or {}).values()]
     return {
         "entry_data": async_redact_data(dict(entry.data), TO_REDACT),
         "coordinator_data": async_redact_data(raw_data, TO_REDACT),
