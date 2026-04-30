@@ -12,7 +12,7 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -69,6 +69,15 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, ...] = (
 )
 
 
+def _build_binary_sensor_entities(
+    coordinator: RatioCoordinator, serial: str
+) -> list["RatioBinarySensor"]:
+    return [
+        RatioBinarySensor(coordinator, serial, desc)
+        for desc in BINARY_SENSOR_DESCRIPTIONS
+    ]
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -76,12 +85,23 @@ async def async_setup_entry(
 ) -> None:
     """Set up Ratio binary sensors from a config entry."""
     coordinator: RatioCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    entities: list[RatioBinarySensor] = []
-    serials = coordinator.data.chargers if coordinator.data else {}
-    for serial in serials:
-        for desc in BINARY_SENSOR_DESCRIPTIONS:
-            entities.append(RatioBinarySensor(coordinator, serial, desc))
-    async_add_entities(entities)
+    known: set[str] = set()
+
+    @callback
+    def _add_new() -> None:
+        if coordinator.data is None:
+            return
+        new = set(coordinator.data.chargers) - known
+        if not new:
+            return
+        entities: list[RatioBinarySensor] = []
+        for serial in new:
+            entities.extend(_build_binary_sensor_entities(coordinator, serial))
+        known.update(new)
+        async_add_entities(entities)
+
+    _add_new()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
 class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity):

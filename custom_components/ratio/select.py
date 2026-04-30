@@ -7,7 +7,7 @@ from aioratio import RatioClient
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -32,12 +32,24 @@ async def async_setup_entry(
     coordinator: RatioCoordinator = data["coordinator"]
     client: RatioClient = data["client"]
 
-    entities: list[CoordinatorEntity] = []
-    serials = coordinator.data.chargers if coordinator.data else {}
-    for serial in serials:
-        entities.append(RatioChargeModeSelect(coordinator, client, serial))
-        entities.append(RatioActiveVehicleSelect(coordinator, client, serial))
-    async_add_entities(entities)
+    known: set[str] = set()
+
+    @callback
+    def _add_new() -> None:
+        if coordinator.data is None:
+            return
+        new = set(coordinator.data.chargers) - known
+        if not new:
+            return
+        entities: list[CoordinatorEntity] = []
+        for serial in new:
+            entities.append(RatioChargeModeSelect(coordinator, client, serial))
+            entities.append(RatioActiveVehicleSelect(coordinator, client, serial))
+        known.update(new)
+        async_add_entities(entities)
+
+    _add_new()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
 class _RatioSelectBase(CoordinatorEntity[RatioCoordinator], SelectEntity):

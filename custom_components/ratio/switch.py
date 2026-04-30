@@ -8,7 +8,7 @@ from aioratio import RatioClient
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -29,10 +29,21 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][entry.entry_id]
     coordinator: RatioCoordinator = data["coordinator"]
     client: RatioClient = data["client"]
+    known: set[str] = set()
 
-    serials = coordinator.data.chargers if coordinator.data else {}
-    entities = [RatioChargingSwitch(coordinator, client, serial) for serial in serials]
-    async_add_entities(entities)
+    @callback
+    def _add_new() -> None:
+        if coordinator.data is None:
+            return
+        new = set(coordinator.data.chargers) - known
+        if not new:
+            return
+        entities = [RatioChargingSwitch(coordinator, client, serial) for serial in new]
+        known.update(new)
+        async_add_entities(entities)
+
+    _add_new()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
 class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):

@@ -69,6 +69,12 @@ SENSOR_DESCRIPTIONS: tuple[RatioSensorEntityDescription, ...] = (
 )
 
 
+def _build_sensor_entities(
+    coordinator: RatioCoordinator, serial: str
+) -> list[RatioSensor]:
+    return [RatioSensor(coordinator, serial, desc) for desc in SENSOR_DESCRIPTIONS]
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -76,11 +82,23 @@ async def async_setup_entry(
 ) -> None:
     """Set up Ratio sensors from a config entry."""
     coordinator: RatioCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    entities: list[RatioSensor] = []
-    for serial in coordinator.data.chargers if coordinator.data else {}:
-        for desc in SENSOR_DESCRIPTIONS:
-            entities.append(RatioSensor(coordinator, serial, desc))
-    async_add_entities(entities)
+    known: set[str] = set()
+
+    @callback
+    def _add_new() -> None:
+        if coordinator.data is None:
+            return
+        new = set(coordinator.data.chargers) - known
+        if not new:
+            return
+        entities: list[RatioSensor] = []
+        for serial in new:
+            entities.extend(_build_sensor_entities(coordinator, serial))
+        known.update(new)
+        async_add_entities(entities)
+
+    _add_new()
+    entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
 class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
