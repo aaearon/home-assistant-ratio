@@ -23,7 +23,9 @@ async def test_update_populates_chargers_settings_and_vehicles(
     client = MagicMock()
     client.chargers_overview = AsyncMock(return_value=[_overview("ABC123")])
     client.user_settings = AsyncMock(return_value=UserSettings())
-    client.vehicles = AsyncMock(return_value=[Vehicle(vehicle_id="v1", vehicle_name="Car")])
+    client.vehicles = AsyncMock(
+        return_value=[Vehicle(vehicle_id="v1", vehicle_name="Car")]
+    )
 
     entry = MagicMock(spec=ConfigEntry, entry_id="test_entry")
     coord = RatioCoordinator(hass, client, entry)

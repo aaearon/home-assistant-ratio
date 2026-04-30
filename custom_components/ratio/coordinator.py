@@ -74,6 +74,11 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         async def _settings(serial: str) -> tuple[str, UserSettings | None]:
             try:
                 return serial, await self.client.user_settings(serial)
+            except RatioRateLimitError:
+                # Re-raise so the whole cycle fails with UpdateFailed and HA
+                # applies its built-in backoff — better than silently dropping
+                # settings refreshes every poll.
+                raise
             except (RatioConnectionError, RatioApiError) as err:
                 _LOGGER.debug("user_settings(%s) failed: %s", serial, err)
                 return serial, None
@@ -81,14 +86,19 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         async def _vehicles() -> list[Vehicle] | None:
             try:
                 return await self.client.vehicles()
+            except RatioRateLimitError:
+                raise
             except (RatioConnectionError, RatioApiError) as err:
                 _LOGGER.debug("vehicles() failed: %s", err)
                 return None
 
-        settings_results, vehicles_result = await asyncio.gather(
-            asyncio.gather(*(_settings(s) for s in chargers)),
-            _vehicles(),
-        )
+        try:
+            settings_results, vehicles_result = await asyncio.gather(
+                asyncio.gather(*(_settings(s) for s in chargers)),
+                _vehicles(),
+            )
+        except RatioRateLimitError as err:
+            raise UpdateFailed(f"rate limited; backing off: {err}") from err
 
         user_settings: dict[str, UserSettings] = {}
         for serial, settings in settings_results:
@@ -116,10 +126,15 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         **kwargs: Any,
     ) -> Any:
         """Run a charger command and schedule an immediate refresh."""
+        name = getattr(fn, "__name__", "command")
         try:
             result = await fn(*args, **kwargs)
         except RatioRateLimitError as err:
             # Don't trigger an immediate refresh — it would just hit 429 again.
-            raise HomeAssistantError(f"rate limited: {err}") from err
+            raise HomeAssistantError(f"{name}: rate limited: {err}") from err
+        except RatioConnectionError as err:
+            raise HomeAssistantError(f"{name}: connection error: {err}") from err
+        except RatioApiError as err:
+            raise HomeAssistantError(f"{name} failed: {err}") from err
         await self.async_request_refresh()
         return result
