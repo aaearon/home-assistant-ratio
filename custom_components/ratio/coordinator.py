@@ -12,12 +12,13 @@ from aioratio.exceptions import (
     RatioApiError,
     RatioAuthError,
     RatioConnectionError,
+    RatioRateLimitError,
 )
 from aioratio.models import ChargerOverview, UserSettings, Vehicle
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
@@ -61,6 +62,9 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
             overviews = await self.client.chargers_overview()
         except RatioAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
+        except RatioRateLimitError as err:
+            # Subclass of RatioApiError — must be caught first.
+            raise UpdateFailed(f"rate limited; backing off: {err}") from err
         except (RatioConnectionError, RatioApiError) as err:
             raise UpdateFailed(str(err)) from err
 
@@ -112,6 +116,10 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         **kwargs: Any,
     ) -> Any:
         """Run a charger command and schedule an immediate refresh."""
-        result = await fn(*args, **kwargs)
+        try:
+            result = await fn(*args, **kwargs)
+        except RatioRateLimitError as err:
+            # Don't trigger an immediate refresh — it would just hit 429 again.
+            raise HomeAssistantError(f"rate limited: {err}") from err
         await self.async_request_refresh()
         return result
