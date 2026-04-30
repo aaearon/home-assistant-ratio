@@ -18,8 +18,8 @@ from .coordinator import RatioCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 # The cloud may omit allowedValues for chargingMode; this fallback mirrors
-# the modes seen in the APK. Update if Ratio adds modes.
-_CHARGE_MODE_FALLBACK = ["FAST", "SOLAR", "SMART_SOLAR"]
+# the modes returned for live accounts. Update if Ratio adds modes.
+_CHARGE_MODE_FALLBACK = ["Smart", "SmartSolar", "PureSolar"]
 
 
 async def async_setup_entry(
@@ -109,10 +109,11 @@ class RatioChargeModeSelect(_RatioSelectBase):
         return settings.charging_mode.value
 
     async def async_select_option(self, option: str) -> None:
+        # Enum settings on PUT take the raw string value, not the GET shape.
         await self.coordinator.request_command(
             self._client.set_user_settings,
             self._serial,
-            {"chargingMode": {"value": option}},
+            {"chargingMode": option},
         )
 
 
