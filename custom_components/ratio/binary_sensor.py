@@ -77,7 +77,8 @@ async def async_setup_entry(
     """Set up Ratio binary sensors from a config entry."""
     coordinator: RatioCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     entities: list[RatioBinarySensor] = []
-    for serial in coordinator.data or {}:
+    serials = coordinator.data.chargers if coordinator.data else {}
+    for serial in serials:
         for desc in BINARY_SENSOR_DESCRIPTIONS:
             entities.append(RatioBinarySensor(coordinator, serial, desc))
     async_add_entities(entities)
@@ -108,7 +109,9 @@ class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity)
 
     @property
     def is_on(self) -> bool | None:
-        ov = (self.coordinator.data or {}).get(self._serial)
+        if self.coordinator.data is None:
+            return None
+        ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None:
             return None
         try:
