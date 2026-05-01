@@ -31,7 +31,13 @@
     "sensor": {
       "actual_charging_power": { "name": "Charging power" },
       "cloud_connection_state": { "name": "Cloud connection state" },
-      "charging_state": { "name": "Charging state" }
+      "charging_state": { "name": "Charging state" },
+      "firmware_update_status": { "name": "Firmware update status" },
+      "last_session_energy": { "name": "Last session energy" },
+      "last_session_duration": { "name": "Last session duration" },
+      "last_session_started_at": { "name": "Last session started" },
+      "last_session_ended_at": { "name": "Last session ended" },
+      "last_session_vehicle": { "name": "Last session vehicle" }
     },
     "binary_sensor": {
       "vehicle_connected": { "name": "Vehicle connected" },
@@ -40,7 +46,12 @@
       "error": { "name": "Error" },
       "charging_disabled": { "name": "Charging disabled" },
       "charging_authorized": { "name": "Charging authorized" },
-      "power_reduced_by_dso": { "name": "Power reduced by DSO" }
+      "power_reduced_by_dso": { "name": "Power reduced by DSO" },
+      "firmware_update_available": { "name": "Firmware update available" },
+      "firmware_update_allowed": { "name": "Firmware update allowed" }
+    },
+    "button": {
+      "grant_upgrade_permission": { "name": "Grant upgrade permission" }
     },
     "switch": {
       "charging": { "name": "Charging" }
@@ -48,6 +59,14 @@
     "select": {
       "charge_mode": { "name": "Charge mode" },
       "active_vehicle": { "name": "Active vehicle" }
+    },
+    "number": {
+      "sun_on_delay_minutes": { "name": "Sun on delay" },
+      "sun_off_delay_minutes": { "name": "Sun off delay" },
+      "pure_solar_starting_current": { "name": "Pure solar starting current" },
+      "smart_solar_starting_current": { "name": "Smart solar starting current" },
+      "maximum_charging_current": { "name": "Maximum charging current" },
+      "minimum_charging_current": { "name": "Minimum charging current" }
     }
   },
   "services": {
@@ -62,6 +81,29 @@
     "set_schedule": {
       "name": "Set schedule",
       "description": "Replace the weekly charge schedule for the targeted Ratio charger."
+    },
+    "add_vehicle": {
+      "name": "Add vehicle",
+      "description": "Register a new vehicle on the Ratio account.",
+      "fields": {
+        "vehicle_name": { "name": "Vehicle name", "description": "Display name for the vehicle." },
+        "license_plate": { "name": "License plate", "description": "Optional license plate." }
+      }
+    },
+    "remove_vehicle": {
+      "name": "Remove vehicle",
+      "description": "Remove a vehicle from the Ratio account.",
+      "fields": {
+        "vehicle_id": { "name": "Vehicle", "description": "The vehicle to remove." }
+      }
+    },
+    "import_session_history": {
+      "name": "Import session history",
+      "description": "Backfill external statistics from completed charge sessions in the chosen window.",
+      "fields": {
+        "begin_time": { "name": "Begin time", "description": "Start of the window to import." },
+        "end_time": { "name": "End time", "description": "Optional end of the window. Defaults to now." }
+      }
     }
   }
 }

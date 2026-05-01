@@ -33,3 +33,50 @@ set_schedule:
       required: true
       selector:
         object:
+
+add_vehicle:
+  name: Add vehicle
+  description: Register a new vehicle on the Ratio account.
+  fields:
+    vehicle_name:
+      name: Vehicle name
+      description: Display name for the vehicle.
+      required: true
+      example: "Tesla Model 3"
+      selector:
+        text:
+    license_plate:
+      name: License plate
+      description: Optional license plate.
+      required: false
+      example: "AB-12-CD"
+      selector:
+        text:
+
+remove_vehicle:
+  name: Remove vehicle
+  description: Remove a vehicle from the Ratio account.
+  fields:
+    vehicle_id:
+      name: Vehicle
+      description: The vehicle to remove.
+      required: true
+      selector:
+        text:
+
+import_session_history:
+  name: Import session history
+  description: Backfill external statistics from completed charge sessions in the chosen window.
+  fields:
+    begin_time:
+      name: Begin time
+      description: Start of the window to import.
+      required: true
+      selector:
+        datetime:
+    end_time:
+      name: End time
+      description: Optional end of the window. Defaults to now.
+      required: false
+      selector:
+        datetime:

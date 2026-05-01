@@ -14,7 +14,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN, PLATFORMS
-from .coordinator import RatioCoordinator
+from .coordinator import RatioCoordinator, RatioHistoryCoordinator
 from .services import async_setup_services, async_unload_services
 
 if TYPE_CHECKING:
@@ -55,12 +55,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         coordinator = RatioCoordinator(hass, client, entry)
+        # Load persisted preferences (preferred vehicle per charger) before the
+        # first refresh so entities see the correct selection on startup.
+        await coordinator.async_load_preferences()
         await coordinator.async_config_entry_first_refresh()
+
+        history_coordinator = RatioHistoryCoordinator(hass, client, entry)
+        await history_coordinator.async_load()
 
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
             "client": client,
             "coordinator": coordinator,
+            "history_coordinator": history_coordinator,
         }
+
+        # Schedule the first history refresh as a background task — it may
+        # trigger a 30-day backfill and must not block config entry setup.
+        entry.async_create_background_task(
+            hass,
+            history_coordinator.async_config_entry_first_refresh(),
+            "ratio_history_first_refresh",
+        )
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:

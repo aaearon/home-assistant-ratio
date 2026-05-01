@@ -14,6 +14,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -21,7 +22,7 @@ from .const import DOMAIN
 from .coordinator import RatioCoordinator
 
 
-@dataclass(frozen=True, kw_only=True)
+@dataclass(kw_only=True)
 class RatioBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Describes a Ratio binary sensor."""
 
@@ -93,12 +94,39 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, ...] = (
 )
 
 
+def _fw(ov: ChargerOverview):
+    return ov.charger_firmware_status
+
+
+FIRMWARE_BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, ...] = (
+    RatioBinarySensorEntityDescription(
+        key="firmware_update_available",
+        translation_key="firmware_update_available",
+        name="Firmware update available",
+        device_class=BinarySensorDeviceClass.UPDATE,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda ov: (
+            _fw(ov).is_firmware_update_available if _fw(ov) is not None else None
+        ),
+    ),
+    RatioBinarySensorEntityDescription(
+        key="firmware_update_allowed",
+        translation_key="firmware_update_allowed",
+        name="Firmware update allowed",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda ov: (
+            _fw(ov).is_firmware_update_allowed if _fw(ov) is not None else None
+        ),
+    ),
+)
+
+
 def _build_binary_sensor_entities(
     coordinator: RatioCoordinator, serial: str
 ) -> list["RatioBinarySensor"]:
     return [
         RatioBinarySensor(coordinator, serial, desc)
-        for desc in BINARY_SENSOR_DESCRIPTIONS
+        for desc in (*BINARY_SENSOR_DESCRIPTIONS, *FIRMWARE_BINARY_SENSOR_DESCRIPTIONS)
     ]
 
 
