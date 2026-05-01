@@ -49,7 +49,7 @@ One device per charger, with the following entities:
 | number | `sun_on_delay_minutes`, `sun_off_delay_minutes`, `pure_solar_starting_current`, `smart_solar_starting_current` | `solar_settings` (GET/PUT) |
 | number | `maximum_charging_current`, `minimum_charging_current` | `user_settings` (GET/PUT) |
 | button | `grant_upgrade_permission` | approves queued firmware update jobs |
-| statistics | `total_energy` | long-term energy statistics from session history |
+| — | `ratio:energy_<serial>` (external statistic) | long-term energy statistics imported from session history via `import_session_history` |
 
 Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle, regardless of how many chargers).
 

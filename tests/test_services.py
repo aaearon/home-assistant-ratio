@@ -70,7 +70,7 @@ def test_schedule_schema_rejects_non_dict_slots() -> None:
 
 @pytest.mark.asyncio
 async def test_set_schedule_calls_client_directly(hass: HomeAssistant) -> None:
-    """_handle_set_schedule should call client.set_charge_schedule directly, not via getattr."""
+    """_handle_set_schedule should pass client.set_charge_schedule to request_command."""
     from aioratio.models import ChargeSchedule
 
     client = MagicMock()

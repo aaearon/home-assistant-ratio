@@ -121,8 +121,9 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
     """Select for the active vehicle.
 
     The cloud has no per-charger "default vehicle" setting; this is a
-    HA-side preference that is passed to the next start_charge call
-    and persisted via ``async_save_preferences()``.
+    HA-side preference used as the default vehicle for ``start_charge``
+    when no explicit ``vehicle_id`` is provided, persisted across
+    restarts via ``async_save_preferences()``.
     """
 
     _attr_translation_key = "active_vehicle"
