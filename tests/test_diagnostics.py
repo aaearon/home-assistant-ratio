@@ -100,3 +100,82 @@ async def test_diagnostics_empty_data(
     assert coord_data["user_settings"] == []
     assert coord_data["solar_settings"] == []
     assert coord_data["vehicles"] == []
+    assert coord_data["diagnostics"] == []
+    assert coord_data["ocpp_settings"] == []
+    assert coord_data["cpms_options"] == []
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_includes_new_sections(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+) -> None:
+    """New diagnostics, ocpp_settings, cpms_options sections appear in output."""
+    from aioratio.models import CpmsConfig, InstallerOcppSettings
+    from aioratio.models.diagnostics import BackendStatus, ChargerDiagnostics
+
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+    coordinator.async_set_updated_data(
+        RatioData(
+            chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
+            diagnostics={SERIAL: ChargerDiagnostics(backend_status=BackendStatus(connected=True))},
+            ocpp_settings={SERIAL: InstallerOcppSettings(enabled=True, charge_point_identifier="CP-1")},
+            cpms_options={SERIAL: [CpmsConfig(central_system="Op", url="ws://op.com")]},
+        )
+    )
+    await hass.async_block_till_done()
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    coord_data = result["coordinator_data"]
+    assert len(coord_data["diagnostics"]) == 1
+    assert len(coord_data["ocpp_settings"]) == 1
+    assert len(coord_data["cpms_options"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_redacts_new_sensitive_fields(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+) -> None:
+    """New sensitive fields like cpms_url, ssid, address must be redacted."""
+    from aioratio.models import CpmsConfig, InstallerOcppSettings
+    from aioratio.models.diagnostics import ChargerDiagnostics, NetworkStatus, WifiStatus, Ipv4
+
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+    coordinator.async_set_updated_data(
+        RatioData(
+            chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
+            diagnostics={SERIAL: ChargerDiagnostics(
+                network_status=NetworkStatus(
+                    wifi=WifiStatus(
+                        ssid="MyHomeNet",
+                        ipv4=Ipv4(address="192.168.1.50", netmask="255.255.255.0", gateway="192.168.1.1"),
+                    ),
+                ),
+            )},
+            ocpp_settings={SERIAL: InstallerOcppSettings(charge_point_identifier="CP-SECRET")},
+            cpms_options={SERIAL: [CpmsConfig(central_system="Op", url="ws://secret.com")]},
+        )
+    )
+    await hass.async_block_till_done()
+
+    result = await async_get_config_entry_diagnostics(hass, entry)
+    coord_data = result["coordinator_data"]
+
+    # ssid, address, gateway, netmask should be redacted
+    diag = coord_data["diagnostics"][0]
+    wifi = diag["network_status"]["wifi"]
+    assert wifi["ssid"] == "**REDACTED**"
+    assert wifi["ipv4"]["address"] == "**REDACTED**"
+    assert wifi["ipv4"]["gateway"] == "**REDACTED**"
+    assert wifi["ipv4"]["netmask"] == "**REDACTED**"
+
+    # charge_point_identifier should be redacted
+    ocpp = coord_data["ocpp_settings"][0]
+    assert ocpp["charge_point_identifier"] == "**REDACTED**"
+
+    # cpms url should be redacted
+    cpms = coord_data["cpms_options"][0][0]
+    assert cpms["url"] == "**REDACTED**"

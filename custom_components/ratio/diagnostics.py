@@ -22,6 +22,15 @@ TO_REDACT = {
     "serialNumber",
     "license_plate",
     "licensePlate",
+    # OCPP / network — can leak operator identity and network topology
+    "cpms_url",
+    "url",
+    "charge_point_identifier",
+    "chargePointIdentifier",
+    "ssid",
+    "address",
+    "gateway",
+    "netmask",
 }
 
 
@@ -54,6 +63,17 @@ async def async_get_config_entry_diagnostics(
         [_to_jsonable(s) for s in data.solar_settings.values()] if data else []
     )
     vehicles = [_to_jsonable(v) for v in data.vehicles] if data else []
+    diagnostics_list = (
+        [_to_jsonable(d) for d in data.diagnostics.values()] if data else []
+    )
+    ocpp_settings_list = (
+        [_to_jsonable(s) for s in data.ocpp_settings.values()] if data else []
+    )
+    cpms_options_list = (
+        [[_to_jsonable(c) for c in opts] for opts in data.cpms_options.values()]
+        if data
+        else []
+    )
     return {
         "entry_data": async_redact_data(dict(entry.data), TO_REDACT),
         "coordinator_data": async_redact_data(
@@ -62,6 +82,9 @@ async def async_get_config_entry_diagnostics(
                 "user_settings": user_settings,
                 "solar_settings": solar_settings,
                 "vehicles": vehicles,
+                "diagnostics": diagnostics_list,
+                "ocpp_settings": ocpp_settings_list,
+                "cpms_options": cpms_options_list,
             },
             TO_REDACT,
         ),

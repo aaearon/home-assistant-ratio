@@ -25,6 +25,9 @@ def auto_enable_custom_integrations(
 
 def _make_client_instance() -> MagicMock:
     """Build a fully-stubbed mock RatioClient instance."""
+    from aioratio.models import InstallerOcppSettings
+    from aioratio.models.diagnostics import ChargerDiagnostics
+
     instance = MagicMock()
     instance.__aenter__ = AsyncMock(return_value=instance)
     instance.__aexit__ = AsyncMock(return_value=None)
@@ -43,6 +46,10 @@ def _make_client_instance() -> MagicMock:
     instance.add_vehicle = AsyncMock()
     instance.remove_vehicle = AsyncMock()
     instance.grant_upgrade_permission = AsyncMock()
+    instance.diagnostics = AsyncMock(return_value=ChargerDiagnostics())
+    instance.ocpp_settings = AsyncMock(return_value=InstallerOcppSettings())
+    instance.set_ocpp_settings = AsyncMock()
+    instance.cpms_options = AsyncMock(return_value=[])
     return instance
 
 

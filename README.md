@@ -41,7 +41,7 @@ Token files (`.storage/ratio_<entry_id>.tokens`) and preference storage are clea
 
 ## Supported Devices
 
-- **Ratio 6** — the primary charger model tested with this integration
+- **Ratio Solar** — the primary charger model tested with this integration
 - Any Ratio charger connected to the Ratio cloud should work, as the integration uses the same cloud API as the official mobile app
 
 The integration discovers chargers automatically from your Ratio account. Each charger appears as a separate device in Home Assistant.

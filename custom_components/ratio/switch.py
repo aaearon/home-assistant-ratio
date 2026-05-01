@@ -1,12 +1,15 @@
 """Switch platform for Ratio EV Charging."""
 from __future__ import annotations
 
+import dataclasses
 import logging
 from typing import Any
 
 from aioratio import RatioClient
+from aioratio.models import InstallerOcppSettings
 
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -39,7 +42,12 @@ async def async_setup_entry(
         new = set(coordinator.data.chargers) - known
         if not new:
             return
-        entities = [RatioChargingSwitch(coordinator, client, serial) for serial in new]
+        entities: list[SwitchEntity] = [
+            RatioChargingSwitch(coordinator, client, serial) for serial in new
+        ]
+        entities.extend(
+            RatioOcppEnabledSwitch(coordinator, client, serial) for serial in new
+        )
         known.update(new)
         async_add_entities(entities)
 
@@ -126,3 +134,74 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
             return None
         ov = self.coordinator.data.chargers.get(self._serial)
         return ov.charger_status if ov is not None else None
+
+
+class RatioOcppEnabledSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
+    """Switch that enables / disables OCPP on the charger."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "ocpp_enabled"
+    _attr_name = "OCPP enabled"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: RatioCoordinator,
+        client: RatioClient,
+        serial: str,
+    ) -> None:
+        super().__init__(coordinator)
+        self._client = client
+        self._serial = serial
+        self._attr_unique_id = f"{serial}_ocpp_enabled_switch"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, serial)},
+            manufacturer="Ratio",
+            name=f"Ratio {serial}",
+            serial_number=serial,
+        )
+
+    def _ocpp_settings(self) -> InstallerOcppSettings | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.ocpp_settings.get(self._serial)
+
+    @property
+    def available(self) -> bool:
+        settings = self._ocpp_settings()
+        if settings is None:
+            return False
+        return settings.enabled_status.is_change_allowed
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        settings = self._ocpp_settings()
+        if settings is None:
+            return None
+        reason = settings.enabled_status.change_not_allowed_reason
+        if reason is not None:
+            return {"change_not_allowed_reason": reason}
+        return None
+
+    @property
+    def is_on(self) -> bool | None:
+        settings = self._ocpp_settings()
+        if settings is None:
+            return None
+        return settings.enabled
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        settings = self._ocpp_settings() or InstallerOcppSettings()
+        await self.coordinator.request_command(
+            self._client.set_ocpp_settings,
+            self._serial,
+            dataclasses.replace(settings, enabled=True),
+        )
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        settings = self._ocpp_settings() or InstallerOcppSettings()
+        await self.coordinator.request_command(
+            self._client.set_ocpp_settings,
+            self._serial,
+            dataclasses.replace(settings, enabled=False),
+        )

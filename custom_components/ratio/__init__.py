@@ -4,6 +4,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Any
+try:
+    from typing import TypeAlias
+except ImportError:
+    from typing_extensions import TypeAlias  # type: ignore[assignment]
 
 from aioratio import JsonFileTokenStore, RatioClient
 from aioratio.exceptions import RatioAuthError
@@ -31,7 +35,7 @@ class RatioRuntimeData:
     history_coordinator: RatioHistoryCoordinator
 
 
-type RatioConfigEntry = ConfigEntry[RatioRuntimeData]
+RatioConfigEntry: TypeAlias = ConfigEntry[RatioRuntimeData]
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:

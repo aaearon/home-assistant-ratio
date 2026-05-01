@@ -7,6 +7,7 @@ from collections.abc import Callable
 from typing import Any
 
 from aioratio.models import ChargerOverview
+from aioratio.models.diagnostics import ChargerDiagnostics
 from aioratio.models.history import Session
 
 from homeassistant.components.sensor import (
@@ -15,7 +16,7 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfEnergy, UnitOfPower, UnitOfTime
+from homeassistant.const import UnitOfEnergy, UnitOfPower, UnitOfTime, SIGNAL_STRENGTH_DECIBELS_MILLIWATT
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.const import EntityCategory
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -83,6 +84,154 @@ FIRMWARE_SENSOR_DESCRIPTIONS: tuple[RatioSensorEntityDescription, ...] = (
         value_fn=lambda ov: (
             _fw(ov).firmware_update_status if _fw(ov) is not None else None
         ),
+    ),
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RatioDiagnosticSensorDescription(SensorEntityDescription):
+    """Describes a Ratio diagnostic sensor backed by ChargerDiagnostics."""
+
+    value_fn: Callable[[ChargerDiagnostics], Any] = field(default=lambda _: None)
+
+
+def _pi(d: ChargerDiagnostics) -> Any:
+    return d.product_information
+
+
+def _mc(d: ChargerDiagnostics) -> Any:
+    pi = d.product_information
+    return pi.main_controller if pi is not None else None
+
+
+def _cc(d: ChargerDiagnostics) -> Any:
+    pi = d.product_information
+    return pi.connectivity_controller if pi is not None else None
+
+
+def _ns(d: ChargerDiagnostics) -> Any:
+    return d.network_status
+
+
+DIAGNOSTIC_SENSOR_DESCRIPTIONS: tuple[RatioDiagnosticSensorDescription, ...] = (
+    RatioDiagnosticSensorDescription(
+        key="cpc_serial_number",
+        translation_key="cpc_serial_number",
+        name="CPC serial number",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: _mc(d).serial_number if _mc(d) else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="hardware_type",
+        translation_key="hardware_type",
+        name="Hardware type",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: _mc(d).hardware_type if _mc(d) else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="hardware_version",
+        translation_key="hardware_version",
+        name="Hardware version",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: _mc(d).hardware_version if _mc(d) else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="firmware_version",
+        translation_key="firmware_version",
+        name="Firmware version",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: _mc(d).firmware_version if _mc(d) else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="connectivity_firmware_version",
+        translation_key="connectivity_firmware_version",
+        name="Connectivity firmware version",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: _cc(d).firmware_version if _cc(d) else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="connectivity_hardware_version",
+        translation_key="connectivity_hardware_version",
+        name="Connectivity hardware version",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: _cc(d).hardware_version if _cc(d) else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="wifi_ssid",
+        translation_key="wifi_ssid",
+        name="WiFi SSID",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: _ns(d).wifi.ssid if _ns(d) and _ns(d).wifi else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="wifi_rssi",
+        translation_key="wifi_rssi",
+        name="WiFi signal strength",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: _ns(d).wifi.rssi if _ns(d) and _ns(d).wifi else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="wifi_ip",
+        translation_key="wifi_ip",
+        name="WiFi IP address",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: _ns(d).wifi.ipv4.address if _ns(d) and _ns(d).wifi and _ns(d).wifi.ipv4 else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="ethernet_ip",
+        translation_key="ethernet_ip",
+        name="Ethernet IP address",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: _ns(d).ethernet.ipv4.address if _ns(d) and _ns(d).ethernet and _ns(d).ethernet.ipv4 else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="connection_medium",
+        translation_key="connection_medium",
+        name="Connection medium",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: _ns(d).connection_medium if _ns(d) else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="cpms_name",
+        translation_key="cpms_name",
+        name="CPMS name",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.ocpp_status.cpms_name if d.ocpp_status else None,
+    ),
+    RatioDiagnosticSensorDescription(
+        key="cpms_url",
+        translation_key="cpms_url",
+        name="CPMS URL",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: d.ocpp_status.cpms_url if d.ocpp_status else None,
+    ),
+)
+
+
+@dataclass(frozen=True, kw_only=True)
+class RatioOcppSensorDescription(SensorEntityDescription):
+    """Describes a Ratio OCPP settings sensor."""
+
+    value_fn: Callable[[Any], Any] = field(default=lambda _: None)
+
+
+OCPP_SENSOR_DESCRIPTIONS: tuple[RatioOcppSensorDescription, ...] = (
+    RatioOcppSensorDescription(
+        key="charge_point_identifier",
+        translation_key="charge_point_identifier",
+        name="Charge point identifier",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda s: s.charge_point_identifier if s else None,
     ),
 )
 
@@ -189,6 +338,14 @@ async def async_setup_entry(
         entities: list[SensorEntity] = []
         for serial in new:
             entities.extend(_build_sensor_entities(coordinator, serial))
+            entities.extend(
+                RatioDiagnosticSensor(coordinator, serial, desc)
+                for desc in DIAGNOSTIC_SENSOR_DESCRIPTIONS
+            )
+            entities.extend(
+                RatioOcppSensor(coordinator, serial, desc)
+                for desc in OCPP_SENSOR_DESCRIPTIONS
+            )
             if history is not None:
                 entities.extend(
                     RatioLastSessionSensor(history, serial, desc)
@@ -243,6 +400,76 @@ class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
     @callback
     def _handle_coordinator_update(self) -> None:
         super()._handle_coordinator_update()
+
+
+class RatioDiagnosticSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
+    """Sensor reading diagnostics data for a charger."""
+
+    entity_description: RatioDiagnosticSensorDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: RatioCoordinator,
+        serial: str,
+        description: RatioDiagnosticSensorDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self._serial = serial
+        self.entity_description = description
+        self._attr_unique_id = f"{serial}_{description.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, serial)},
+            manufacturer="Ratio",
+            name=f"Ratio {serial}",
+            serial_number=serial,
+        )
+
+    @property
+    def native_value(self) -> Any:
+        if self.coordinator.data is None:
+            return None
+        diag = self.coordinator.data.diagnostics.get(self._serial)
+        if diag is None:
+            return None
+        try:
+            return self.entity_description.value_fn(diag)
+        except AttributeError:
+            return None
+
+
+class RatioOcppSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
+    """Sensor reading OCPP settings for a charger."""
+
+    entity_description: RatioOcppSensorDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: RatioCoordinator,
+        serial: str,
+        description: RatioOcppSensorDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self._serial = serial
+        self.entity_description = description
+        self._attr_unique_id = f"{serial}_{description.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, serial)},
+            manufacturer="Ratio",
+            name=f"Ratio {serial}",
+            serial_number=serial,
+        )
+
+    @property
+    def native_value(self) -> Any:
+        if self.coordinator.data is None:
+            return None
+        settings = self.coordinator.data.ocpp_settings.get(self._serial)
+        try:
+            return self.entity_description.value_fn(settings)
+        except AttributeError:
+            return None
 
 
 class RatioLastSessionSensor(
