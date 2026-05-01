@@ -13,11 +13,7 @@ This is an unofficial integration. Not affiliated with Ratio.
 
 ## Status
 
-Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, and dynamic charger discovery have been smoke-tested against a real charger. See [Known limitations](#known-limitations) for the remaining caveats.
-
-## Why a new integration
-
-There is an existing community integration ([RowanRamasray/Ratio_Ev_Charger](https://github.com/RowanRamasray/Ratio_Ev_Charger)). It works but bundles `boto3` + `warrant` directly inside the custom component, fuses protocol logic with Home Assistant internals, and only covers part of the API. This rewrite extracts the protocol layer into a separate library ([`aioratio`](https://github.com/aaearon/aioratio)) and keeps the HA integration thin.
+Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/schedule number controls, session history statistics, and dynamic charger discovery have been smoke-tested against a real charger. See [Known limitations](#known-limitations) for the remaining caveats.
 
 ## Install
 
@@ -33,7 +29,7 @@ There is an existing community integration ([RowanRamasray/Ratio_Ev_Charger](htt
 
 Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
 
-Home Assistant will install `aioratio==0.2.0` from PyPI automatically; no extra Python deps to manage.
+Home Assistant will install `aioratio==0.4.0` from PyPI automatically; no extra Python deps to manage.
 
 ## What you get
 
@@ -44,18 +40,29 @@ One device per charger, with the following entities:
 | sensor | `actual_charging_power` (W) | `charge_session_status.actual_charging_power` |
 | sensor | `cloud_connection_state` | `cloud_connection_state` |
 | sensor | `charging_state` | `charger_status.indicators.charging_state` |
+| sensor | `firmware_update_status` | `charger_firmware_status.firmware_update_status` |
+| sensor | `last_session_energy`, `last_session_duration`, `last_session_started_at`, `last_session_ended_at`, `last_session_vehicle` | derived from most recent session in history |
 | binary_sensor | `vehicle_connected`, `charge_session_active`, `charging_paused`, `error`, `charging_disabled` (with `reason` attribute), `charging_authorized`, `power_reduced_by_dso` | derived from `charger_status.indicators` |
 | switch | `charging` | `start_charge` / `stop_charge`, gated on `is_charge_start_allowed` / `is_charge_stop_allowed` |
 | select | `charge_mode` | `user_settings.charging_mode` (PUT via `set_user_settings`) |
-| select | `active_vehicle` | HA-side preference passed to the next `start_charge` (in-memory only) |
+| select | `active_vehicle` | HA-side preference passed to the next `start_charge`, persisted across restarts |
+| number | `sun_on_delay_minutes`, `sun_off_delay_minutes`, `pure_solar_starting_current`, `smart_solar_starting_current` | `solar_settings` (GET/PUT) |
+| number | `maximum_charging_current`, `minimum_charging_current` | `user_settings` (GET/PUT) |
+| button | `grant_upgrade_permission` | approves queued firmware update jobs |
+| — | `ratio:energy_<serial>` (external statistic) | long-term energy statistics imported from session history via `import_session_history` |
 
 Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle, regardless of how many chargers).
 
 ### Services
 
-- `ratio.start_charge(device_id, vehicle_id?)`
-- `ratio.stop_charge(device_id)`
-- `ratio.set_schedule(device_id, slots)`
+| Service | Target | Parameters | Response |
+|---|---|---|---|
+| `ratio.start_charge` | `device_id` | `vehicle_id?` | — |
+| `ratio.stop_charge` | `device_id` | — | — |
+| `ratio.set_schedule` | `device_id` | `slots` (list of `{start, end, days}`) | — |
+| `ratio.add_vehicle` | — | `vehicle_name`, `license_plate?` | `{vehicle_id}` |
+| `ratio.remove_vehicle` | — | `vehicle_id` | — |
+| `ratio.import_session_history` | — | `begin_time`, `end_time` | `{imported: {serial: count}}` |
 
 Target a specific charger via Home Assistant's device picker (`device_id`).
 
@@ -68,11 +75,12 @@ Target a specific charger via Home Assistant's device picker (`device_id`).
 |  config_flow.py  ----+   |
 |  coordinator.py      |   |
 |  sensor / switch /   |   |
-|  select / services   |   |
+|  select / number /   |   |
+|  button / services   |   |
 +--------------------|-----+
                      v
               +---------------+
-              |   aioratio    |   <-- pinned: aioratio==0.2.0
+              |   aioratio    |   <-- pinned: aioratio==0.4.0
               |  (PyPI lib)   |
               +-------|-------+
                       v
@@ -94,9 +102,9 @@ Target a specific charger via Home Assistant's device picker (`device_id`).
 ## Known limitations
 
 - **Sensor coverage is bounded by the cloud API.** Voltage, current, and session/total energy are not exposed by the upstream `chargers_overview` endpoint and therefore not available as sensors. `actual_charging_power` is reported in watts.
-- **`active_vehicle` preference is not persisted.** Selecting a vehicle stores the choice in memory on the coordinator and passes it to the next `start_charge`. The selection is lost on Home Assistant restart; the entity then re-derives from the active session.
 - **`charge_mode` allowed values fall back to a hardcoded list** (`Smart`, `SmartSolar`, `PureSolar`) when the cloud omits `allowedValues`. If Ratio adds modes the fallback will need updating.
 - **Password storage**: stored in HA config entry data and persisted in `.storage/core.config_entries` like other config entry data. It does not use `secrets.yaml`, and protection relies on Home Assistant host security rather than separate encryption in this integration.
+- **Account-level services require a single config entry.** `add_vehicle`, `remove_vehicle`, and `import_session_history` raise an error if multiple Ratio config entries exist, since they operate on the account level and there is no device picker to disambiguate.
 
 ## Diagnostics
 
@@ -114,7 +122,7 @@ pytest
 Bumping the library:
 
 1. Land changes in [`aioratio`](https://github.com/aaearon/aioratio), tag a release, watch CI publish to PyPI.
-2. Update `custom_components/ratio/manifest.json` `requirements` pin (e.g. `"aioratio==0.2.0"`).
+2. Update `custom_components/ratio/manifest.json` `requirements` pin (e.g. `"aioratio==0.4.0"`).
 3. Bump `manifest.json` `version` and tag the integration release.
 
 The pin is `==`, not `>=`, matching HA Core convention.
@@ -128,7 +136,8 @@ Files of interest:
 - `custom_components/ratio/__init__.py` — entry setup/teardown, token store wiring, platform forwarding.
 - `custom_components/ratio/coordinator.py` — single `DataUpdateCoordinator` per account; classifies `RatioAuthError` → `ConfigEntryAuthFailed`.
 - `custom_components/ratio/config_flow.py` — user step + reauth.
-- `custom_components/ratio/sensor.py`, `binary_sensor.py`, `switch.py`, `select.py` — `CoordinatorEntity` subclasses keyed by serial.
+- `custom_components/ratio/sensor.py`, `binary_sensor.py`, `switch.py`, `select.py`, `number.py`, `button.py` — `CoordinatorEntity` subclasses keyed by serial.
+- `custom_components/ratio/statistics.py` — long-term energy statistics from session history.
 - `custom_components/ratio/diagnostics.py` — redaction set.
 
 ## License

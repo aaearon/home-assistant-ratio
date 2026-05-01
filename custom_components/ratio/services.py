@@ -243,14 +243,9 @@ async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
     schedule = ChargeSchedule(enabled=True, slots=slots)
     for entry_id, serial in _resolve_serials(hass, call):
         client, coordinator = _client_and_coordinator(hass, entry_id)
-        # TODO: confirm against client.set_charge_schedule signature once
-        # implemented.
-        setter = getattr(client, "set_charge_schedule", None)
-        if setter is None:
-            raise HomeAssistantError(
-                "set_charge_schedule is not supported by the installed aioratio version"
-            )
-        await coordinator.request_command(setter, serial, schedule)
+        await coordinator.request_command(
+            client.set_charge_schedule, serial, schedule
+        )
 
 
 async def async_setup_services(hass: HomeAssistant) -> None:

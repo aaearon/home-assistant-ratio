@@ -69,6 +69,44 @@ def test_schedule_schema_rejects_non_dict_slots() -> None:
 
 
 @pytest.mark.asyncio
+async def test_set_schedule_calls_client_directly(hass: HomeAssistant) -> None:
+    """_handle_set_schedule should pass client.set_charge_schedule to request_command."""
+    from aioratio.models import ChargeSchedule
+
+    client = MagicMock()
+    client.set_charge_schedule = AsyncMock()
+
+    coordinator = MagicMock()
+    coordinator.request_command = AsyncMock()
+
+    hass.data[DOMAIN] = {"entry1": {"client": client, "coordinator": coordinator}}
+
+    device = _make_device(config_entries={"entry1"}, serial="SN-SCH")
+
+    with patch("custom_components.ratio.services.dr.async_get") as mock_dr:
+        mock_dr.return_value.async_get.return_value = device
+
+        await async_setup_services(hass)
+        try:
+            await hass.services.async_call(
+                DOMAIN,
+                "set_schedule",
+                {
+                    "device_id": "dev_123",
+                    "slots": [{"start": "22:00", "end": "06:00", "days": ["monday"]}],
+                },
+                blocking=True,
+            )
+        finally:
+            await async_unload_services(hass)
+
+    coordinator.request_command.assert_awaited_once()
+    args = coordinator.request_command.await_args.args
+    assert args[0] is client.set_charge_schedule
+    assert isinstance(args[2], ChargeSchedule)
+
+
+@pytest.mark.asyncio
 async def test_add_vehicle_returns_vehicle_id_in_response(
     hass: HomeAssistant,
 ) -> None:
