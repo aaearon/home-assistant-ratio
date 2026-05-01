@@ -33,7 +33,7 @@ There is an existing community integration ([RowanRamasray/Ratio_Ev_Charger](htt
 
 Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
 
-Home Assistant will install `aioratio==0.1.0` from PyPI automatically; no extra Python deps to manage.
+Home Assistant will install `aioratio==0.2.0` from PyPI automatically; no extra Python deps to manage.
 
 ## What you get
 
@@ -72,7 +72,7 @@ Target a specific charger via Home Assistant's device picker (`device_id`).
 +--------------------|-----+
                      v
               +---------------+
-              |   aioratio    |   <-- pinned: aioratio==0.1.0
+              |   aioratio    |   <-- pinned: aioratio==0.2.0
               |  (PyPI lib)   |
               +-------|-------+
                       v
@@ -95,7 +95,7 @@ Target a specific charger via Home Assistant's device picker (`device_id`).
 
 - **Sensor coverage is bounded by the cloud API.** Voltage, current, and session/total energy are not exposed by the upstream `chargers_overview` endpoint and therefore not available as sensors. `actual_charging_power` is reported in watts.
 - **`active_vehicle` preference is not persisted.** Selecting a vehicle stores the choice in memory on the coordinator and passes it to the next `start_charge`. The selection is lost on Home Assistant restart; the entity then re-derives from the active session.
-- **`charge_mode` allowed values fall back to a hardcoded list** (`FAST`, `SOLAR`, `SMART_SOLAR`) when the cloud omits `allowedValues`. If Ratio adds modes the fallback will need updating.
+- **`charge_mode` allowed values fall back to a hardcoded list** (`Smart`, `SmartSolar`, `PureSolar`) when the cloud omits `allowedValues`. If Ratio adds modes the fallback will need updating.
 - **Password storage**: stored in HA config entry data and persisted in `.storage/core.config_entries` like other config entry data. It does not use `secrets.yaml`, and protection relies on Home Assistant host security rather than separate encryption in this integration.
 
 ## Diagnostics
