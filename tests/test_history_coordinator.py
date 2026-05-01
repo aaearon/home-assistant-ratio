@@ -1,7 +1,6 @@
 """Tests for RatioHistoryCoordinator (pagination, dedup, backfill, restart)."""
 from __future__ import annotations
 
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -58,7 +57,12 @@ def _patch_import() -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_first_run_backfill_uses_30_days(hass: HomeAssistant) -> None:
+async def test_first_run_backfill_uses_30_days(
+    hass: HomeAssistant, freezer
+) -> None:
+    freezer.move_to("2024-06-15T12:00:00+00:00")
+    frozen_ts = 1718452800  # 2024-06-15T12:00:00Z
+
     serial = "ABC123"
     client = MagicMock()
     client.session_history = AsyncMock(
@@ -72,10 +76,8 @@ async def test_first_run_backfill_uses_30_days(hass: HomeAssistant) -> None:
         await coord._async_update_data()
 
     call = client.session_history.await_args_list[0]
-    begin_time = call.kwargs["begin_time"]
-    now = int(time.time())
-    expected = now - HISTORY_BACKFILL_DAYS * 86400
-    assert abs(begin_time - expected) < 60
+    expected_begin = frozen_ts - (HISTORY_BACKFILL_DAYS * 86400)
+    assert call.kwargs["begin_time"] == expected_begin
     assert call.kwargs["serial_number"] == serial
 
 
