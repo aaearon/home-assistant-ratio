@@ -12,7 +12,7 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from custom_components.ratio.const import DOMAIN
 
 
-def _make_config_entry(hass: HomeAssistant) -> MagicMock:
+def _make_config_entry() -> MagicMock:
     """Create a minimal mock config entry."""
     entry = MagicMock()
     entry.entry_id = "test_entry_id"
@@ -40,10 +40,22 @@ async def test_setup_entry_calls_async_setup_services(hass: HomeAssistant) -> No
     """async_setup_entry must call async_setup_services so services survive reload."""
     client = _make_client_mock()
 
+    hist_instance = MagicMock()
+    hist_instance.async_load = AsyncMock()
+    hist_instance.async_config_entry_first_refresh = AsyncMock()
+
     with (
         patch("custom_components.ratio.RatioClient", return_value=client),
         patch("custom_components.ratio.async_setup_services") as mock_setup_svc,
         patch("custom_components.ratio.RatioCoordinator") as mock_coord_cls,
+        patch(
+            "custom_components.ratio.RatioHistoryCoordinator",
+            return_value=hist_instance,
+        ),
+        patch(
+            "custom_components.ratio.async_get_clientsession",
+            return_value=MagicMock(),
+        ),
         patch.object(
             hass.config_entries,
             "async_forward_entry_setups",
@@ -55,7 +67,7 @@ async def test_setup_entry_calls_async_setup_services(hass: HomeAssistant) -> No
         coord_instance.async_load_preferences = AsyncMock()
         mock_coord_cls.return_value = coord_instance
 
-        entry = _make_config_entry(hass)
+        entry = _make_config_entry()
         from custom_components.ratio import async_setup_entry
 
         result = await async_setup_entry(hass, entry)
@@ -71,8 +83,14 @@ async def test_auth_error_raises_config_entry_auth_failed(
     """RatioAuthError during client login must raise ConfigEntryAuthFailed."""
     client = _make_client_mock(aenter_side_effect=RatioAuthError("bad password"))
 
-    with patch("custom_components.ratio.RatioClient", return_value=client):
-        entry = _make_config_entry(hass)
+    with (
+        patch("custom_components.ratio.RatioClient", return_value=client),
+        patch(
+            "custom_components.ratio.async_get_clientsession",
+            return_value=MagicMock(),
+        ),
+    ):
+        entry = _make_config_entry()
         from custom_components.ratio import async_setup_entry
 
         with pytest.raises(ConfigEntryAuthFailed):
@@ -90,6 +108,10 @@ async def test_client_cleanup_on_coordinator_failure(
         patch("custom_components.ratio.RatioClient", return_value=client),
         patch("custom_components.ratio.async_setup_services", new_callable=AsyncMock),
         patch("custom_components.ratio.RatioCoordinator") as mock_coord_cls,
+        patch(
+            "custom_components.ratio.async_get_clientsession",
+            return_value=MagicMock(),
+        ),
     ):
         coord_instance = MagicMock()
         coord_instance.async_config_entry_first_refresh = AsyncMock(
@@ -98,7 +120,7 @@ async def test_client_cleanup_on_coordinator_failure(
         coord_instance.async_load_preferences = AsyncMock()
         mock_coord_cls.return_value = coord_instance
 
-        entry = _make_config_entry(hass)
+        entry = _make_config_entry()
         from custom_components.ratio import async_setup_entry
 
         with pytest.raises(RuntimeError, match="update failed"):

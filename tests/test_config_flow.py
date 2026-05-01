@@ -1,7 +1,7 @@
 """Smoke tests for the Ratio config flow."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from aioratio.exceptions import RatioAuthError
@@ -14,24 +14,19 @@ from homeassistant.data_entry_flow import FlowResultType
 from custom_components.ratio.const import DOMAIN
 
 
-def _build_client_mock(*, raises: Exception | None = None) -> MagicMock:
-    instance = MagicMock()
-    instance.__aenter__ = AsyncMock(return_value=instance)
-    instance.__aexit__ = AsyncMock(return_value=None)
-    if raises is not None:
-        instance.chargers_overview = AsyncMock(side_effect=raises)
-    else:
-        instance.chargers_overview = AsyncMock(return_value=[])
-    return instance
-
-
 @pytest.mark.asyncio
 async def test_user_step_creates_entry(hass: HomeAssistant) -> None:
     """Happy path: valid credentials produce a config entry."""
-    client = _build_client_mock()
-
-    with patch(
-        "custom_components.ratio.config_flow.RatioClient", return_value=client
+    with (
+        patch(
+            "custom_components.ratio.config_flow._validate_credentials",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "custom_components.ratio.async_setup_entry",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
@@ -56,10 +51,10 @@ async def test_user_step_creates_entry(hass: HomeAssistant) -> None:
 @pytest.mark.asyncio
 async def test_user_step_invalid_auth_shows_error(hass: HomeAssistant) -> None:
     """Auth failure surfaces invalid_auth error on the user form."""
-    client = _build_client_mock(raises=RatioAuthError("bad creds"))
-
     with patch(
-        "custom_components.ratio.config_flow.RatioClient", return_value=client
+        "custom_components.ratio.config_flow._validate_credentials",
+        new_callable=AsyncMock,
+        side_effect=RatioAuthError("bad creds"),
     ):
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
