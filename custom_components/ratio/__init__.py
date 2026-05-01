@@ -5,10 +5,12 @@ import logging
 from typing import TYPE_CHECKING
 
 from aioratio import JsonFileTokenStore, RatioClient
+from aioratio.exceptions import RatioAuthError
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN, PLATFORMS
@@ -30,6 +32,8 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Ratio from a config entry."""
+    await async_setup_services(hass)
+
     email: str = entry.data[CONF_EMAIL]
     password: str = entry.data[CONF_PASSWORD]
 
@@ -43,18 +47,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         token_store=token_store,
         session=session,
     )
-    # Enter the async context manager (login + token refresh handled by client).
-    await client.__aenter__()
 
-    coordinator = RatioCoordinator(hass, client, entry)
-    await coordinator.async_config_entry_first_refresh()
+    try:
+        await client.__aenter__()
+    except RatioAuthError as err:
+        raise ConfigEntryAuthFailed(str(err)) from err
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "client": client,
-        "coordinator": coordinator,
-    }
+    try:
+        coordinator = RatioCoordinator(hass, client, entry)
+        await coordinator.async_config_entry_first_refresh()
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+            "client": client,
+            "coordinator": coordinator,
+        }
+
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except Exception:
+        await client.__aexit__(None, None, None)
+        raise
+
     return True
 
 
