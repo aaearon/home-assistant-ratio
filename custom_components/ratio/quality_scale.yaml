@@ -2,9 +2,7 @@ rules:
   # Bronze
   action-exceptions: done
   appropriate-polling: done
-  brands:
-    status: todo
-    comment: Requires PR to home-assistant/brands with Ratio logo/icon assets.
+  brands: done
   common-modules: done
   config-entry-unloading: done
   config-flow: done
