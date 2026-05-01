@@ -145,7 +145,7 @@ async def async_setup_entry(
     @callback
     def _add_new() -> None:
         if coordinator.data is None:
-            return  # type: ignore[unreachable]
+            return
         new = set(coordinator.data.chargers) - known
         if not new:
             return
@@ -185,7 +185,7 @@ class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity)
     @property
     def is_on(self) -> bool | None:
         if self.coordinator.data is None:
-            return None  # type: ignore[unreachable]
+            return None
         ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None:
             return None

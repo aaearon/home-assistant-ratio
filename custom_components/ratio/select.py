@@ -39,7 +39,7 @@ async def async_setup_entry(
     @callback
     def _add_new() -> None:
         if coordinator.data is None:
-            return  # type: ignore[unreachable]
+            return
         new = set(coordinator.data.chargers) - known
         if not new:
             return
@@ -96,7 +96,7 @@ class RatioChargeModeSelect(_RatioSelectBase):
     @property
     def options(self) -> list[str]:
         if self.coordinator.data is None:
-            return list(_CHARGE_MODE_FALLBACK)  # type: ignore[unreachable]
+            return list(_CHARGE_MODE_FALLBACK)
         settings = self.coordinator.data.user_settings.get(self._serial)
         if settings is None or settings.charging_mode is None:
             return list(_CHARGE_MODE_FALLBACK)
@@ -105,7 +105,7 @@ class RatioChargeModeSelect(_RatioSelectBase):
     @property
     def current_option(self) -> str | None:
         if self.coordinator.data is None:
-            return None  # type: ignore[unreachable]
+            return None
         settings = self.coordinator.data.user_settings.get(self._serial)
         if settings is None or settings.charging_mode is None:
             return None
@@ -144,11 +144,11 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
     def _display_names(self) -> dict[str, str]:
         """Map vehicle_id -> display name, disambiguating duplicates."""
         if self.coordinator.data is None:
-            return {}  # type: ignore[unreachable]
-        vehicles = [v for v in self.coordinator.data.vehicles if v.vehicle_id is not None]
+            return {}
         raw_names: dict[str, str] = {}
-        for v in vehicles:
-            vid: str = v.vehicle_id  # type: ignore[assignment]
+        for v in self.coordinator.data.vehicles:
+            if (vid := v.vehicle_id) is None:
+                continue
             raw_names[vid] = v.vehicle_name or vid
         # Find duplicates
         from collections import Counter
@@ -178,7 +178,7 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
         if preferred is not None:
             return self._name_for(preferred)
         if self.coordinator.data is None:
-            return None  # type: ignore[unreachable]
+            return None
         ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None or ov.charge_session_status is None:
             return None

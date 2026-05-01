@@ -118,10 +118,11 @@ async def async_remove_config_entry_device(
     """Allow removal of devices that are no longer reported by the cloud."""
     coordinator = entry.runtime_data.coordinator
     if coordinator.data is None:
-        return False  # type: ignore[unreachable]
+        return False
+    ratio_serials = {
+        ident[1] for ident in device_entry.identifiers if ident[0] == DOMAIN
+    }
+    if not ratio_serials:
+        return False
     current_serials = set(coordinator.data.chargers.keys())
-    return not any(
-        ident[1] in current_serials
-        for ident in device_entry.identifiers
-        if ident[0] == DOMAIN
-    )
+    return not any(serial in current_serials for serial in ratio_serials)

@@ -182,7 +182,7 @@ async def async_setup_entry(
     @callback
     def _add_new() -> None:
         if coordinator.data is None:
-            return  # type: ignore[unreachable]
+            return
         new = set(coordinator.data.chargers) - known
         if not new:
             return
@@ -227,7 +227,7 @@ class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
     @property
     def _overview(self) -> ChargerOverview | None:
         if self.coordinator.data is None:
-            return None  # type: ignore[unreachable]
+            return None
         return self.coordinator.data.chargers.get(self._serial)
 
     @property

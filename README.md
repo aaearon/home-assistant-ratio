@@ -140,12 +140,12 @@ automation:
         below: 0.10
     condition:
       - condition: state
-        entity_id: binary_sensor.ratio_SERIAL_vehicle_connected
+        entity_id: binary_sensor.ratio_<serial>_vehicle_connected
         state: "on"
     action:
       - service: switch.turn_on
         target:
-          entity_id: switch.ratio_SERIAL_charging
+          entity_id: switch.ratio_<serial>_charging
 ```
 
 ### Notify when a charging session completes
@@ -155,7 +155,7 @@ automation:
   - alias: "Notify charging complete"
     trigger:
       - platform: state
-        entity_id: binary_sensor.ratio_SERIAL_charge_session_active
+        entity_id: binary_sensor.ratio_<serial>_charging
         from: "on"
         to: "off"
     action:
@@ -164,7 +164,7 @@ automation:
           title: "Charging complete"
           message: >
             Session finished. Energy delivered:
-            {{ states('sensor.ratio_SERIAL_last_session_energy') }} Wh
+            {{ states('sensor.ratio_<serial>_last_session_energy') }} Wh
 ```
 
 ### Switch to solar mode during the day
@@ -179,12 +179,12 @@ automation:
     action:
       - service: select.select_option
         target:
-          entity_id: select.ratio_SERIAL_charge_mode
+          entity_id: select.ratio_<serial>_charge_mode
         data:
           option: "PureSolar"
 ```
 
-Replace `SERIAL` with your charger's serial number in entity IDs.
+Replace `<serial>` with your charger's serial number (lowercase). You can find the actual entity IDs in **Settings > Devices & Services > Ratio EV Charging > Entities**.
 
 ## Use Cases
 

@@ -40,7 +40,7 @@ async def async_setup_entry(
     @callback
     def _add_new() -> None:
         if coordinator.data is None:
-            return  # type: ignore[unreachable]
+            return
         new = set(coordinator.data.chargers) - known
         if not new:
             return
@@ -99,7 +99,7 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
 
     def _settings(self) -> Any:
         if self.coordinator.data is None:
-            return None  # type: ignore[unreachable]
+            return None
         if self._settings_parent == "solar":
             return self.coordinator.data.solar_settings.get(self._serial)
         return self.coordinator.data.user_settings.get(self._serial)

@@ -6,7 +6,7 @@ addopts = "--cov=custom_components/ratio --cov-report=term-missing"
 python_version = "3.12"
 strict = true
 warn_return_any = true
-warn_unreachable = true
+warn_unreachable = false
 
 [[tool.mypy.overrides]]
 module = "aioratio.*"

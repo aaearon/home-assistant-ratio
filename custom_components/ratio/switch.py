@@ -35,7 +35,7 @@ async def async_setup_entry(
     @callback
     def _add_new() -> None:
         if coordinator.data is None:
-            return  # type: ignore[unreachable]
+            return
         new = set(coordinator.data.chargers) - known
         if not new:
             return
@@ -74,7 +74,7 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         if self.coordinator.data is None:
-            return None  # type: ignore[unreachable]
+            return None
         ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None or ov.charger_status is None:
             return None
@@ -123,6 +123,6 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
 
     def _charger_status(self) -> Any:
         if self.coordinator.data is None:
-            return None  # type: ignore[unreachable]
+            return None
         ov = self.coordinator.data.chargers.get(self._serial)
         return ov.charger_status if ov is not None else None
