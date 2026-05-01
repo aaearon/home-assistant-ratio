@@ -6,8 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aioratio.models import ChargerOverview
 from aioratio.models.history import Session, SessionHistoryPage, TimeData
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 
 from custom_components.ratio.const import DOMAIN
@@ -27,6 +28,19 @@ def _session(sid: str, serial: str, begin_ts: int, energy: int = 1000) -> Sessio
         begin=TimeData(time=begin_ts),
         end=TimeData(time=begin_ts + 600),
     )
+
+
+def _make_entry(
+    hass: HomeAssistant, entry_id: str = "e1"
+) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        entry_id=entry_id,
+    )
+    entry.add_to_hass(hass)
+    entry._async_set_state(hass, ConfigEntryState.SETUP_IN_PROGRESS, None)
+    return entry
 
 
 def _stub_main_coordinator(
@@ -68,12 +82,12 @@ async def test_first_run_backfill_uses_30_days(
     client.session_history = AsyncMock(
         return_value=SessionHistoryPage(sessions=[], next_token=None)
     )
-    entry = MagicMock(spec=ConfigEntry, entry_id="e1")
+    entry = _make_entry(hass)
     coord = RatioHistoryCoordinator(hass, client, entry)
-    _stub_main_coordinator(hass, "e1", [serial])
+    _stub_main_coordinator(hass, entry.entry_id, [serial])
 
     with _patch_import():
-        await coord._async_update_data()
+        await coord.async_config_entry_first_refresh()
 
     call = client.session_history.await_args_list[0]
     expected_begin = frozen_ts - (HISTORY_BACKFILL_DAYS * 86400)
@@ -85,8 +99,8 @@ async def test_first_run_backfill_uses_30_days(
 async def test_dedup_across_two_polls_with_overlap(hass: HomeAssistant) -> None:
     serial = "S1"
     client = MagicMock()
-    entry = MagicMock(spec=ConfigEntry, entry_id="e2")
-    _stub_main_coordinator(hass, "e2", [serial])
+    entry = _make_entry(hass, entry_id="e2")
+    _stub_main_coordinator(hass, entry.entry_id, [serial])
 
     s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
     s2 = _session("id-2", serial, 1_700_001_000, energy=2000)
@@ -97,7 +111,7 @@ async def test_dedup_across_two_polls_with_overlap(hass: HomeAssistant) -> None:
     coord = RatioHistoryCoordinator(hass, client, entry)
 
     with _patch_import() as mock_import:
-        await coord._async_update_data()
+        await coord.async_config_entry_first_refresh()
         # First call: both sessions imported in chronological order.
         first_args = mock_import.await_args_list[0].args
         assert first_args[1] == serial
@@ -111,7 +125,7 @@ async def test_dedup_across_two_polls_with_overlap(hass: HomeAssistant) -> None:
         return_value=SessionHistoryPage(sessions=[s2, s3], next_token=None)
     )
     with _patch_import() as mock_import:
-        await coord._async_update_data()
+        await coord.async_refresh()
         # Only s3 should be imported (s2 deduped).
         second_args = mock_import.await_args_list[0].args
         second_sessions = second_args[2]
@@ -129,8 +143,8 @@ async def test_dedup_across_two_polls_with_overlap(hass: HomeAssistant) -> None:
 @pytest.mark.asyncio
 async def test_running_total_persists_across_restart(hass: HomeAssistant) -> None:
     serial = "S2"
-    entry = MagicMock(spec=ConfigEntry, entry_id="e3")
-    _stub_main_coordinator(hass, "e3", [serial])
+    entry = _make_entry(hass, entry_id="e3")
+    _stub_main_coordinator(hass, entry.entry_id, [serial])
     client = MagicMock()
 
     s1 = _session("id-1", serial, 1_700_000_000, energy=1500)
@@ -139,7 +153,7 @@ async def test_running_total_persists_across_restart(hass: HomeAssistant) -> Non
     )
     coord1 = RatioHistoryCoordinator(hass, client, entry)
     with _patch_import():
-        await coord1._async_update_data()
+        await coord1.async_config_entry_first_refresh()
 
     coord2 = RatioHistoryCoordinator(hass, client, entry)
     await coord2.async_load()
@@ -152,7 +166,7 @@ async def test_running_total_persists_across_restart(hass: HomeAssistant) -> Non
         return_value=SessionHistoryPage(sessions=[s2], next_token=None)
     )
     with _patch_import() as mock_import:
-        await coord2._async_update_data()
+        await coord2.async_refresh()
         args = mock_import.await_args_list[0].args
         # Resumes from 1500 — not from 0.
         assert args[3] == 1500.0
@@ -164,8 +178,8 @@ async def test_running_total_persists_across_restart(hass: HomeAssistant) -> Non
 @pytest.mark.asyncio
 async def test_pagination_walks_next_tokens(hass: HomeAssistant) -> None:
     serial = "S3"
-    entry = MagicMock(spec=ConfigEntry, entry_id="e4")
-    _stub_main_coordinator(hass, "e4", [serial])
+    entry = _make_entry(hass, entry_id="e4")
+    _stub_main_coordinator(hass, entry.entry_id, [serial])
 
     s1 = _session("a", serial, 1_700_000_000)
     s2 = _session("b", serial, 1_700_001_000)
@@ -181,7 +195,7 @@ async def test_pagination_walks_next_tokens(hass: HomeAssistant) -> None:
     coord = RatioHistoryCoordinator(hass, client, entry)
 
     with _patch_import() as mock_import:
-        await coord._async_update_data()
+        await coord.async_config_entry_first_refresh()
         sessions = mock_import.await_args_list[0].args[2]
         assert [s.session_id for s in sessions] == ["a", "b", "c"]
 

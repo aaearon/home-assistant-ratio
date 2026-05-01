@@ -57,6 +57,7 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"{DOMAIN}_{entry.entry_id}",
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
         )
@@ -226,6 +227,7 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=f"{DOMAIN}_{entry.entry_id}_history",
             update_interval=timedelta(seconds=HISTORY_SCAN_INTERVAL),
         )
