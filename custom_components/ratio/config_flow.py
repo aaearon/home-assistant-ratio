@@ -9,9 +9,9 @@ import voluptuous as vol
 from aioratio import MemoryTokenStore, RatioClient
 from aioratio.exceptions import RatioAuthError, RatioConnectionError, RatioError
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlow
-from homeassistant.data_entry_flow import FlowResult as ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
+from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN
@@ -27,7 +27,7 @@ USER_SCHEMA = vol.Schema(
 
 
 async def _validate_credentials(
-    hass, email: str, password: str
+    hass: HomeAssistant, email: str, password: str
 ) -> None:
     """Attempt a login. Raises RatioAuthError / RatioConnectionError on failure."""
     session = async_get_clientsession(hass)
@@ -125,5 +125,47 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="reauth_confirm",
             data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
             description_placeholders={"email": email},
+            errors=errors,
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle reconfiguration of credentials."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            email = user_input[CONF_EMAIL].strip()
+            password = user_input[CONF_PASSWORD]
+
+            await self.async_set_unique_id(email.lower())
+            self._abort_if_unique_id_mismatch(reason="account_mismatch")
+
+            try:
+                await _validate_credentials(self.hass, email, password)
+            except RatioAuthError:
+                errors["base"] = "invalid_auth"
+            except RatioConnectionError:
+                errors["base"] = "cannot_connect"
+            except RatioError:
+                errors["base"] = "unknown"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error during reconfigure")
+                errors["base"] = "unknown"
+            else:
+                return self.async_update_reload_and_abort(
+                    self._get_reconfigure_entry(),
+                    data={CONF_EMAIL: email, CONF_PASSWORD: password},
+                )
+
+        reconfigure_entry = self._get_reconfigure_entry()
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_EMAIL, default=reconfigure_entry.data.get(CONF_EMAIL, "")): str,
+                    vol.Required(CONF_PASSWORD): str,
+                }
+            ),
             errors=errors,
         )

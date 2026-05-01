@@ -132,3 +132,47 @@ async def test_grant_button_press_calls_client_with_job_ids() -> None:
     assert args[0] is client.grant_upgrade_permission
     assert args[1] == "SN001"
     assert kwargs.get("firmware_update_job_ids") == ["j1", "j2"]
+
+
+@pytest.mark.asyncio
+async def test_grant_button_press_noop_when_no_jobs() -> None:
+    """Pressing the button with no jobs should be a no-op."""
+    fw = ChargerFirmwareStatus(
+        is_firmware_update_available=True,
+        is_firmware_update_allowed=False,
+        firmware_update_jobs=[],
+    )
+    ov = ChargerOverview(serial_number="SN001", charger_firmware_status=fw)
+    coord = _coord(ov)
+    client = MagicMock()
+    btn = RatioGrantUpgradePermissionButton(coord, client, "SN001")
+
+    await btn.async_press()
+
+    coord.request_command.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_grant_button_press_noop_when_firmware_status_absent() -> None:
+    """Pressing the button with no firmware status should be a no-op."""
+    ov = ChargerOverview(serial_number="SN001", charger_firmware_status=None)
+    coord = _coord(ov)
+    client = MagicMock()
+    btn = RatioGrantUpgradePermissionButton(coord, client, "SN001")
+
+    await btn.async_press()
+
+    coord.request_command.assert_not_awaited()
+
+
+def test_grant_button_unavailable_when_no_update_available() -> None:
+    """Button should be unavailable when no firmware update is available."""
+    fw = ChargerFirmwareStatus(
+        is_firmware_update_available=False,
+        is_firmware_update_allowed=False,
+        firmware_update_jobs=[FirmwareUpdateJob(job_id="j1")],
+    )
+    ov = ChargerOverview(serial_number="SN001", charger_firmware_status=fw)
+    coord = _coord(ov)
+    btn = RatioGrantUpgradePermissionButton(coord, MagicMock(), "SN001")
+    assert btn.available is False

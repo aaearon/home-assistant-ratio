@@ -13,7 +13,8 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
 from aioratio.models.history import Session
 
@@ -87,7 +88,7 @@ def build_statistics(
         hour = _floor_hour(int(s.begin.time))
         hourly[hour] = hourly.get(hour, 0.0) + float(s.total_charging_energy or 0)
 
-    stats: list[dict[str, Any]] = []
+    stats: list[StatisticData] = []
     running = float(starting_total)
     for hour in sorted(hourly):
         energy = hourly[hour]

@@ -31,6 +31,21 @@ Copy `custom_components/ratio/` into your Home Assistant `config/custom_componen
 
 Home Assistant will install `aioratio==0.5.0` from PyPI automatically; no extra Python deps to manage.
 
+## Removing the Integration
+
+1. Go to **Settings → Devices & Services**.
+2. Find the **Ratio EV Charging** entry and click the three-dot menu (⋮).
+3. Select **Delete**.
+
+Token files (`.storage/ratio_<entry_id>.tokens`) and preference storage are cleaned up automatically when the config entry is removed. No manual file deletion is needed.
+
+## Supported Devices
+
+- **Ratio 6** — the primary charger model tested with this integration
+- Any Ratio charger connected to the Ratio cloud should work, as the integration uses the same cloud API as the official mobile app
+
+The integration discovers chargers automatically from your Ratio account. Each charger appears as a separate device in Home Assistant.
+
 ## What you get
 
 One device per charger, with the following entities:
@@ -65,6 +80,125 @@ Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle,
 | `ratio.import_session_history` | — | `begin_time`, `end_time` | `{imported: {serial: count}}` |
 
 Target a specific charger via Home Assistant's device picker (`device_id`).
+
+### Function Summary
+
+| Function | How |
+|----------|-----|
+| Monitor charging state | Binary sensors and state sensors |
+| Start / stop charging | Switch entity or `ratio.start_charge` / `ratio.stop_charge` services |
+| Configure charge mode | Select entity (`Smart`, `SmartSolar`, `PureSolar`) |
+| Set preferred vehicle | Select entity (used for next `start_charge`) |
+| Adjust solar settings | Number entities (sun delays, starting currents) |
+| Adjust current limits | Number entities (min/max charging current) |
+| Manage vehicles | `ratio.add_vehicle` / `ratio.remove_vehicle` services |
+| Set charge schedule | `ratio.set_schedule` service |
+| Import session history | `ratio.import_session_history` service → long-term statistics |
+| Approve firmware updates | Button entity |
+| View diagnostics | Settings → Devices & Services → ⋮ → Download diagnostics |
+
+## Configuration Parameters
+
+The integration exposes several number and select entities that let you configure charger behavior directly from Home Assistant:
+
+| Entity | Type | Description |
+|--------|------|-------------|
+| Charge mode | Select | Switching between `Smart`, `SmartSolar`, and `PureSolar` charging modes |
+| Active vehicle | Select | Which vehicle to associate with the next `start_charge` command (HA-side preference, persisted across restarts) |
+| Sun on delay | Number | Minutes of sustained solar surplus before solar charging starts |
+| Sun off delay | Number | Minutes after solar surplus drops before solar charging stops |
+| Pure solar starting current | Number | Minimum current (A) to begin a pure-solar session |
+| Smart solar starting current | Number | Minimum current (A) to begin a smart-solar session |
+| Maximum charging current | Number | Upper current limit (A) for the charger |
+| Minimum charging current | Number | Lower current limit (A) for the charger |
+
+Number entities write to the Ratio cloud API when changed and take effect on the next charging cycle.
+
+## Data Update
+
+The integration uses two polling coordinators:
+
+| Coordinator | Interval | What it fetches |
+|-------------|----------|-----------------|
+| Main | 60 seconds | Charger status, user settings, solar settings, vehicles |
+| History | 300 seconds (5 min) | Completed charge sessions for long-term energy statistics |
+
+After any command (start/stop charge, change settings), the main coordinator triggers an immediate refresh so entity states update without waiting for the next poll cycle.
+
+The integration uses the `cloud_polling` IoT class — there is no local network communication. All data flows through the Ratio cloud REST API.
+
+## Automation Examples
+
+### Start charging when electricity price is low
+
+```yaml
+automation:
+  - alias: "Start EV charging on low price"
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.electricity_price
+        below: 0.10
+    condition:
+      - condition: state
+        entity_id: binary_sensor.ratio_<serial>_vehicle_connected
+        state: "on"
+    action:
+      - service: switch.turn_on
+        target:
+          entity_id: switch.ratio_<serial>_charging
+```
+
+### Notify when a charging session completes
+
+```yaml
+automation:
+  - alias: "Notify charging complete"
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.ratio_<serial>_charging
+        from: "on"
+        to: "off"
+    action:
+      - service: notify.mobile_app
+        data:
+          title: "Charging complete"
+          message: >
+            Session finished. Energy delivered:
+            {{ states('sensor.ratio_<serial>_last_session_energy') }} Wh
+```
+
+### Switch to solar mode during the day
+
+```yaml
+automation:
+  - alias: "Solar charging during daytime"
+    trigger:
+      - platform: sun
+        event: sunrise
+        offset: "+01:00:00"
+    action:
+      - service: select.select_option
+        target:
+          entity_id: select.ratio_<serial>_charge_mode
+        data:
+          option: "PureSolar"
+```
+
+Replace `<serial>` with your charger's serial number (lowercase). You can find the actual entity IDs in **Settings > Devices & Services > Ratio EV Charging > Entities**.
+
+## Use Cases
+
+### Solar-optimized charging
+
+Use the `PureSolar` or `SmartSolar` charge mode to charge your EV primarily from solar panels. Adjust the sun on/off delay and starting current settings to match your solar installation's characteristics.
+
+### Scheduled charging
+
+Use the `ratio.set_schedule` service to set weekly charging windows, e.g. only charge during off-peak hours. Combine with automations to dynamically adjust the schedule based on energy prices.
+
+### Multi-vehicle management
+
+Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle select to control which vehicle gets attributed to the next charging session. The preferred vehicle is persisted per charger across restarts.
 
 ## How it works
 
@@ -105,10 +239,44 @@ Target a specific charger via Home Assistant's device picker (`device_id`).
 - **`charge_mode` allowed values fall back to a hardcoded list** (`Smart`, `SmartSolar`, `PureSolar`) when the cloud omits `allowedValues`. If Ratio adds modes the fallback will need updating.
 - **Password storage**: stored in HA config entry data and persisted in `.storage/core.config_entries` like other config entry data. It does not use `secrets.yaml`, and protection relies on Home Assistant host security rather than separate encryption in this integration.
 - **Account-level services require a single config entry.** `add_vehicle`, `remove_vehicle`, and `import_session_history` raise an error if multiple Ratio config entries exist, since they operate on the account level and there is no device picker to disambiguate.
+- **Rate limiting**: The Ratio cloud API enforces rate limits. The integration handles 429 responses with automatic backoff, but aggressive polling or frequent command calls may trigger temporary throttling.
+- **DSO power reduction is read-only.** The `power_reduced_by_dso` binary sensor reflects whether the Distribution System Operator has reduced available power, but this cannot be controlled from HA — it is set by the DSO via the charger's smart grid interface.
 
 ## Diagnostics
 
 `Settings → Devices & Services → Ratio EV Charging → ⋮ → Download diagnostics`. The dump redacts: email, password, all tokens, device key/group/password, charger serial numbers, license plates.
+
+## Troubleshooting
+
+### Authentication errors
+
+- **"Invalid email or password"** during setup: verify you can sign in with the same credentials in the Ratio mobile app.
+- **Reauth prompted after working**: the Ratio cloud tokens expired and could not be refreshed. Re-enter your password when prompted. This can happen after extended cloud outages or password changes.
+
+### Stale or missing data
+
+- Entities showing "unavailable": the charger may be offline or the Ratio cloud may be unreachable. Check your charger's internet connection.
+- Settings not updating: the integration polls every 60 seconds. If you changed a setting via the Ratio app, wait up to a minute for HA to reflect it.
+- After a restart, entities may briefly show "unknown" until the first poll completes.
+
+### Rate limiting
+
+The Ratio cloud API enforces rate limits. If the integration hits a rate limit, the coordinator backs off automatically using HA's built-in exponential backoff. You'll see `rate limited; backing off` in the logs. Normal polling resumes once the limit window resets.
+
+### Cloud connectivity
+
+The integration requires an active internet connection to communicate with the Ratio cloud. It does not support local-only operation. If the Ratio cloud is down, all entities will become unavailable until connectivity is restored.
+
+### Debug logging
+
+To enable debug logs for the integration:
+
+```yaml
+logger:
+  logs:
+    custom_components.ratio: debug
+    aioratio: debug
+```
 
 ## Develop
 

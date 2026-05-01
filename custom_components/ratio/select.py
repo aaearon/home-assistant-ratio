@@ -6,14 +6,17 @@ import logging
 from aioratio import RatioClient
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import RatioConfigEntry
 from .const import DOMAIN
 from .coordinator import RatioCoordinator
+
+PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,13 +27,12 @@ _CHARGE_MODE_FALLBACK = ["Smart", "SmartSolar", "PureSolar"]
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: RatioConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Ratio selects from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: RatioCoordinator = data["coordinator"]
-    client: RatioClient = data["client"]
+    coordinator = entry.runtime_data.coordinator
+    client = entry.runtime_data.client
 
     known: set[str] = set()
 
@@ -41,7 +43,7 @@ async def async_setup_entry(
         new = set(coordinator.data.chargers) - known
         if not new:
             return
-        entities: list[CoordinatorEntity] = []
+        entities: list[SelectEntity] = []
         for serial in new:
             entities.append(RatioChargeModeSelect(coordinator, client, serial))
             entities.append(RatioActiveVehicleSelect(coordinator, client, serial))
@@ -81,6 +83,7 @@ class RatioChargeModeSelect(_RatioSelectBase):
 
     _attr_translation_key = "charge_mode"
     _attr_name = "Charge mode"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -128,6 +131,7 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
 
     _attr_translation_key = "active_vehicle"
     _attr_name = "Active vehicle"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -141,10 +145,11 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
         """Map vehicle_id -> display name, disambiguating duplicates."""
         if self.coordinator.data is None:
             return {}
-        vehicles = [v for v in self.coordinator.data.vehicles if v.vehicle_id is not None]
         raw_names: dict[str, str] = {}
-        for v in vehicles:
-            raw_names[v.vehicle_id] = v.vehicle_name or v.vehicle_id
+        for v in self.coordinator.data.vehicles:
+            if (vid := v.vehicle_id) is None:
+                continue
+            raw_names[vid] = v.vehicle_name or vid
         # Find duplicates
         from collections import Counter
 

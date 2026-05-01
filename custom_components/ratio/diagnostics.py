@@ -5,11 +5,9 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from homeassistant.components.diagnostics import async_redact_data
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
-from .coordinator import RatioCoordinator
+from . import RatioConfigEntry
 
 TO_REDACT = {
     "email",
@@ -29,7 +27,7 @@ TO_REDACT = {
 
 def _to_jsonable(obj: Any) -> Any:
     """Convert dataclasses (and nested containers) to plain dicts."""
-    if is_dataclass(obj):
+    if is_dataclass(obj) and not isinstance(obj, type):
         return {k: _to_jsonable(v) for k, v in asdict(obj).items()}
     if isinstance(obj, dict):
         return {k: _to_jsonable(v) for k, v in obj.items()}
@@ -39,10 +37,10 @@ def _to_jsonable(obj: Any) -> Any:
 
 
 async def async_get_config_entry_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntry
+    hass: HomeAssistant, entry: RatioConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    coordinator: RatioCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data.coordinator
     # async_redact_data redacts by field name, not by dict key. Coordinator
     # data is keyed by charger serial, so emit as a list to avoid leaking
     # serials as top-level keys; serial_number inside each entry is in
@@ -52,6 +50,9 @@ async def async_get_config_entry_diagnostics(
     user_settings = (
         [_to_jsonable(s) for s in data.user_settings.values()] if data else []
     )
+    solar_settings = (
+        [_to_jsonable(s) for s in data.solar_settings.values()] if data else []
+    )
     vehicles = [_to_jsonable(v) for v in data.vehicles] if data else []
     return {
         "entry_data": async_redact_data(dict(entry.data), TO_REDACT),
@@ -59,6 +60,7 @@ async def async_get_config_entry_diagnostics(
             {
                 "chargers": chargers,
                 "user_settings": user_settings,
+                "solar_settings": solar_settings,
                 "vehicles": vehicles,
             },
             TO_REDACT,

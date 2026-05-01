@@ -7,28 +7,29 @@ from typing import Any
 from aioratio import RatioClient
 
 from homeassistant.components.switch import SwitchEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import RatioConfigEntry
 from .const import DOMAIN
 from .coordinator import RatioCoordinator
+
+PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: RatioConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Ratio switches from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: RatioCoordinator = data["coordinator"]
-    client: RatioClient = data["client"]
+    coordinator = entry.runtime_data.coordinator
+    client = entry.runtime_data.client
     known: set[str] = set()
 
     @callback
@@ -91,7 +92,9 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
             ind = status.indicators
             state = ind.charging_state if ind is not None else "unknown"
             raise HomeAssistantError(
-                f"charger reports start not allowed (state={state})"
+                translation_domain=DOMAIN,
+                translation_key="charge_start_not_allowed",
+                translation_placeholders={"state": str(state)},
             )
         call_kwargs: dict[str, Any] = {}
         preferred = self.coordinator.preferred_vehicle.get(self._serial)
@@ -110,13 +113,15 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
             ind = status.indicators
             state = ind.charging_state if ind is not None else "unknown"
             raise HomeAssistantError(
-                f"charger reports stop not allowed (state={state})"
+                translation_domain=DOMAIN,
+                translation_key="charge_stop_not_allowed",
+                translation_placeholders={"state": str(state)},
             )
         await self.coordinator.request_command(
             self._client.stop_charge, self._serial
         )
 
-    def _charger_status(self):
+    def _charger_status(self) -> Any:
         if self.coordinator.data is None:
             return None
         ov = self.coordinator.data.chargers.get(self._serial)

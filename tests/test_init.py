@@ -129,3 +129,35 @@ async def test_client_cleanup_on_coordinator_failure(
 
     # Client must have been cleaned up despite the failure.
     client.__aexit__.assert_awaited_once_with(None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_stale_device_removal_allowed(hass: HomeAssistant) -> None:
+    """async_remove_config_entry_device should allow removal of unknown serials."""
+    from custom_components.ratio import async_remove_config_entry_device
+    from custom_components.ratio.coordinator import RatioData, RatioCoordinator
+    from homeassistant.helpers import device_registry as dr
+
+    entry = _make_config_entry(hass)
+
+    # Build a mock runtime_data with a coordinator that knows about one charger
+    coordinator = MagicMock(spec=RatioCoordinator)
+    coordinator.data = RatioData(chargers={"KNOWN_SERIAL": MagicMock()})
+
+    runtime_data = MagicMock()
+    runtime_data.coordinator = coordinator
+    entry.runtime_data = runtime_data
+
+    # Device with a serial NOT in current chargers -> stale, allow removal
+    stale_device = MagicMock(spec=dr.DeviceEntry)
+    stale_device.identifiers = {("ratio", "OLD_SERIAL")}
+    assert await async_remove_config_entry_device(hass, entry, stale_device) is True
+
+    # Device with a serial IN current chargers -> active, deny removal
+    active_device = MagicMock(spec=dr.DeviceEntry)
+    active_device.identifiers = {("ratio", "KNOWN_SERIAL")}
+    assert await async_remove_config_entry_device(hass, entry, active_device) is False
+
+    # When coordinator.data is None, deny removal (can't confirm stale)
+    coordinator.data = None
+    assert await async_remove_config_entry_device(hass, entry, stale_device) is False

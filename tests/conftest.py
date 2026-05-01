@@ -88,9 +88,9 @@ async def setup_integration(
 ) -> MockConfigEntry:
     """Set up the Ratio integration via the real async_setup_entry path.
 
-    After this fixture completes, ``hass.data[DOMAIN][entry.entry_id]``
-    contains ``{client, coordinator, history_coordinator}`` — populated
-    by the real setup code, not by manual injection.
+    After this fixture completes, ``entry.runtime_data`` contains the
+    ``RatioRuntimeData`` dataclass — populated by the real setup code,
+    not by manual injection.
     """
     await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()

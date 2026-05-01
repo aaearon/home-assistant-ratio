@@ -7,6 +7,10 @@
         "data": {
           "email": "Email",
           "password": "Password"
+        },
+        "data_description": {
+          "email": "The email address you use to sign in to the Ratio mobile app.",
+          "password": "The password for your Ratio account."
         }
       },
       "reauth_confirm": {
@@ -14,6 +18,21 @@
         "description": "Re-enter the password for {email}.",
         "data": {
           "password": "Password"
+        },
+        "data_description": {
+          "password": "The updated password for your Ratio account."
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Ratio EV Charging",
+        "description": "Update the credentials for your Ratio account.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        },
+        "data_description": {
+          "email": "The email address you use to sign in to the Ratio mobile app.",
+          "password": "The password for your Ratio account."
         }
       }
     },
@@ -24,7 +43,8 @@
     },
     "abort": {
       "already_configured": "This Ratio account is already configured.",
-      "reauth_successful": "Re-authentication successful."
+      "reauth_successful": "Re-authentication successful.",
+      "account_mismatch": "The email address does not match the original account. To use a different account, remove and re-add the integration."
     }
   },
   "entity": {
@@ -67,6 +87,41 @@
       "smart_solar_starting_current": { "name": "Smart solar starting current" },
       "maximum_charging_current": { "name": "Maximum charging current" },
       "minimum_charging_current": { "name": "Minimum charging current" }
+    }
+  },
+  "exceptions": {
+    "unknown_device": {
+      "message": "Unknown device {device_id}."
+    },
+    "not_ratio_charger": {
+      "message": "Device {device_id} is not a Ratio charger."
+    },
+    "no_active_config_entry": {
+      "message": "No active Ratio config entry for device {device_id}."
+    },
+    "config_entry_not_found": {
+      "message": "Config entry {entry_id} not found."
+    },
+    "no_config_entry_loaded": {
+      "message": "No Ratio config entry is loaded."
+    },
+    "multiple_accounts": {
+      "message": "Multiple Ratio accounts are configured; this service does not yet support targeting a specific account."
+    },
+    "rate_limited": {
+      "message": "{command}: rate limited: {error}"
+    },
+    "connection_error": {
+      "message": "{command}: connection error: {error}"
+    },
+    "command_failed": {
+      "message": "{command} failed: {error}"
+    },
+    "charge_start_not_allowed": {
+      "message": "Charger reports start not allowed (state={state})."
+    },
+    "charge_stop_not_allowed": {
+      "message": "Charger reports stop not allowed (state={state})."
     }
   },
   "services": {
