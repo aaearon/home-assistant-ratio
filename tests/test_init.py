@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioratio.exceptions import RatioAuthError
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
@@ -12,12 +13,12 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from custom_components.ratio.const import DOMAIN
 
 
-def _make_config_entry() -> MagicMock:
-    """Create a minimal mock config entry."""
-    entry = MagicMock()
-    entry.entry_id = "test_entry_id"
-    entry.data = {"email": "user@example.com", "password": "hunter2"}
-    entry.domain = DOMAIN
+def _make_config_entry(hass: HomeAssistant) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+    )
+    entry.add_to_hass(hass)
     return entry
 
 
@@ -67,7 +68,7 @@ async def test_setup_entry_calls_async_setup_services(hass: HomeAssistant) -> No
         coord_instance.async_load_preferences = AsyncMock()
         mock_coord_cls.return_value = coord_instance
 
-        entry = _make_config_entry()
+        entry = _make_config_entry(hass)
         from custom_components.ratio import async_setup_entry
 
         result = await async_setup_entry(hass, entry)
@@ -90,7 +91,7 @@ async def test_auth_error_raises_config_entry_auth_failed(
             return_value=MagicMock(),
         ),
     ):
-        entry = _make_config_entry()
+        entry = _make_config_entry(hass)
         from custom_components.ratio import async_setup_entry
 
         with pytest.raises(ConfigEntryAuthFailed):
@@ -120,7 +121,7 @@ async def test_client_cleanup_on_coordinator_failure(
         coord_instance.async_load_preferences = AsyncMock()
         mock_coord_cls.return_value = coord_instance
 
-        entry = _make_config_entry()
+        entry = _make_config_entry(hass)
         from custom_components.ratio import async_setup_entry
 
         with pytest.raises(RuntimeError, match="update failed"):

@@ -6,15 +6,6 @@ from unittest.mock import MagicMock
 from aioratio.models import Vehicle
 from aioratio.models.history import Session, TimeData
 
-# Compatibility shim mirroring test_select.py.
-try:
-    from homeassistant.helpers.device_registry import DeviceInfo  # noqa: F401
-except ImportError:
-    import homeassistant.helpers.device_registry as _dr
-    from homeassistant.helpers.entity import DeviceInfo as _DI  # type: ignore[attr-defined]
-
-    _dr.DeviceInfo = _DI  # type: ignore[attr-defined]
-
 from custom_components.ratio.sensor import (
     LAST_SESSION_DESCRIPTIONS,
     RatioLastSessionSensor,

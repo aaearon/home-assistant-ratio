@@ -8,16 +8,6 @@ from aioratio.models import Vehicle
 
 from custom_components.ratio.coordinator import RatioData
 
-# select.py imports DeviceInfo from device_registry, which may not exist in
-# older HA stubs shipped with pytest-homeassistant-custom-component. Patch it.
-try:
-    from homeassistant.helpers.device_registry import DeviceInfo  # noqa: F401
-except ImportError:
-    import homeassistant.helpers.device_registry as _dr
-    from homeassistant.helpers.entity import DeviceInfo as _DI  # type: ignore[attr-defined]
-
-    _dr.DeviceInfo = _DI  # type: ignore[attr-defined]
-
 from custom_components.ratio.select import RatioActiveVehicleSelect
 
 

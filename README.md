@@ -119,6 +119,12 @@ pip install pytest-homeassistant-custom-component
 pytest
 ```
 
+Tests use `MockConfigEntry`, the real `device_registry` fixture, and a
+`setup_integration` fixture that runs the full `async_setup_entry` path with a
+mocked `RatioClient`. Coordinator tests call
+`async_config_entry_first_refresh()` / `async_refresh()` (not the private
+`_async_update_data()`). Time-dependent tests use the `freezer` fixture.
+
 Bumping the library:
 
 1. Land changes in [`aioratio`](https://github.com/aaearon/aioratio), tag a release, watch CI publish to PyPI.
