@@ -1,8 +1,9 @@
 """External statistics importer for Ratio charge sessions.
 
-Each completed charge session contributes one hourly statistic point on the
+Completed charge sessions are aggregated per hour on the
 ``ratio:energy_<serial>`` external statistic, with monotonically increasing
-``sum`` (running cumulative Wh) and ``state`` set to the per-session energy.
+``sum`` (running cumulative Wh) and ``state`` set to the total energy for
+that hour.
 
 Uses ``async_add_external_statistics``; the recorder requires the source to
 match the statistic_id domain prefix (``ratio``).

@@ -352,7 +352,11 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
             # Use a fresh starting_total of 0 — manual imports backfill an
             # arbitrary historic window and shouldn't poison the live total.
             await async_import_sessions(self.hass, serial, sessions, 0.0)
-            imported[serial] = len(sessions)
+            imported[serial] = sum(
+                1
+                for s in sessions
+                if s.begin is not None and getattr(s.begin, "time", None)
+            )
         return imported
 
     async def _async_update_data(self) -> dict[str, list[Session]]:
