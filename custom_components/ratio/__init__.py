@@ -69,10 +69,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "history_coordinator": history_coordinator,
         }
 
-        # Kick off the first history refresh in the background — the main
-        # coordinator's chargers must be populated (already true via the
-        # first_refresh above) for the history coordinator to discover serials.
-        await history_coordinator.async_config_entry_first_refresh()
+        # Schedule the first history refresh as a background task — it may
+        # trigger a 30-day backfill and must not block config entry setup.
+        entry.async_create_background_task(
+            hass,
+            history_coordinator.async_config_entry_first_refresh(),
+            "ratio_history_first_refresh",
+        )
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     except Exception:

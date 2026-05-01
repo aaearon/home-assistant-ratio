@@ -318,6 +318,12 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         Does NOT mutate the regular polling state (``_last_imported_end_time``,
         ``_seen_ids``, ``_running_total``) — manual imports are intended to fill
         gaps without disturbing the running totals used by the live poll loop.
+
+        Note: if begin_time predates existing live-imported sessions, the
+        backfilled statistics will have sum=0 as their baseline and will not
+        be monotonically consistent with live-imported points. Use this service
+        for initial setup or gap-filling only; re-adding the integration resets
+        the live baseline cleanly.
         """
         from datetime import datetime as _dt
 
@@ -406,9 +412,11 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                     self._last_imported_end_time.get(serial, 0), int(latest_end)
                 )
             else:
-                # Keep last_imported_end_time advancing modestly so we don't keep
-                # asking for 30 days every time when there genuinely is nothing.
-                self._last_imported_end_time.setdefault(serial, now_ts)
+                # Advance to now even when no new sessions so the next poll
+                # uses a fresh window rather than re-fetching the same range.
+                self._last_imported_end_time[serial] = max(
+                    self._last_imported_end_time.get(serial, 0), now_ts
+                )
 
             # Cap dedup IDs (FIFO).
             id_list = list(self._seen_ids.get(serial, []))

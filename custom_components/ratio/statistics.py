@@ -65,18 +65,22 @@ def build_statistics(
     Sessions must already be in chronological (ascending begin) order.
     Returns ``(statistics, new_running_total)``.
     """
-    stats: list[dict[str, Any]] = []
-    running = float(starting_total)
+    # Aggregate sessions per hour — the recorder expects at most one row per
+    # start interval per statistic_id.
+    hourly: dict[datetime, float] = {}
     for s in sessions:
         if s.begin is None or not s.begin.time:
-            _LOGGER.debug(
-                "skipping session %s without begin time", s.session_id
-            )
+            _LOGGER.debug("skipping session %s without begin time", s.session_id)
             continue
-        energy = float(s.total_charging_energy or 0)
+        hour = _floor_hour(int(s.begin.time))
+        hourly[hour] = hourly.get(hour, 0.0) + float(s.total_charging_energy or 0)
+
+    stats: list[dict[str, Any]] = []
+    running = float(starting_total)
+    for hour in sorted(hourly):
+        energy = hourly[hour]
         running += energy
-        start = _floor_hour(int(s.begin.time))
-        stats.append({"start": start, "state": energy, "sum": running})
+        stats.append({"start": hour, "state": energy, "sum": running})
     return stats, running
 
 

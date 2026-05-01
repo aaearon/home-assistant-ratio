@@ -1,7 +1,7 @@
 """Sensor platform for Ratio EV Charging."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -88,7 +88,7 @@ FIRMWARE_SENSOR_DESCRIPTIONS: tuple[RatioSensorEntityDescription, ...] = (
 class RatioLastSessionSensorDescription(SensorEntityDescription):
     """Describes a last-session sensor backed by the history coordinator."""
 
-    value_fn: Callable[[Session], Any]
+    value_fn: Callable[[Session], Any] = field(default=lambda _: None)
 
 
 def _last_session(history: RatioHistoryCoordinator, serial: str) -> Session | None:
