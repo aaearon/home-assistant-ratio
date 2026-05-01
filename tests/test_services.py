@@ -8,9 +8,11 @@ import pytest
 import voluptuous as vol
 from aioratio.models import Vehicle
 from aioratio.models.history import Session, SessionHistoryPage, TimeData
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 
 from custom_components.ratio.const import (
     ATTR_SLOTS,
@@ -28,37 +30,46 @@ from custom_components.ratio.services import (
 )
 
 
-def _make_device(config_entries: set[str], serial: str = "SN001") -> MagicMock:
-    dev = MagicMock()
-    dev.config_entries = config_entries
-    dev.identifiers = {(DOMAIN, serial)}
-    return dev
+def _make_entry(hass: HomeAssistant, entry_id: str = "entry1") -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        entry_id=entry_id,
+    )
+    entry.add_to_hass(hass)
+    return entry
 
 
 @pytest.mark.asyncio
-async def test_resolve_serials_picks_active_entry(hass: HomeAssistant) -> None:
+async def test_resolve_serials_picks_active_entry(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+) -> None:
     """_resolve_serials should skip stale entries and pick the active one."""
-    active_id = "entry_active"
-    stale_id = "entry_stale"
+    active_entry = _make_entry(hass, entry_id="entry_active")
+    stale_entry = _make_entry(hass, entry_id="entry_stale")
 
     # Only active_id is present in hass.data[DOMAIN]
-    hass.data[DOMAIN] = {active_id: {"client": MagicMock(), "coordinator": MagicMock()}}
+    hass.data[DOMAIN] = {
+        active_entry.entry_id: {"client": MagicMock(), "coordinator": MagicMock()},
+    }
 
-    device = _make_device(config_entries={stale_id, active_id}, serial="SN001")
+    device = device_registry.async_get_or_create(
+        config_entry_id=stale_entry.entry_id,
+        identifiers={(DOMAIN, "SN001")},
+    )
+    device_registry.async_update_device(
+        device.id, add_config_entry_id=active_entry.entry_id
+    )
 
-    with patch(
-        "custom_components.ratio.services.dr.async_get"
-    ) as mock_dr:
-        mock_dr.return_value.async_get.return_value = device
+    call = MagicMock()
+    call.data = {"device_id": device.id}
 
-        call = MagicMock()
-        call.data = {"device_id": "dev_123"}
-
-        pairs = _resolve_serials(hass, call)
+    pairs = _resolve_serials(hass, call)
 
     assert len(pairs) == 1
     entry_id, serial = pairs[0]
-    assert entry_id == active_id
+    assert entry_id == active_entry.entry_id
     assert serial == "SN001"
 
 
@@ -69,7 +80,10 @@ def test_schedule_schema_rejects_non_dict_slots() -> None:
 
 
 @pytest.mark.asyncio
-async def test_set_schedule_calls_client_directly(hass: HomeAssistant) -> None:
+async def test_set_schedule_calls_client_directly(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+) -> None:
     """_handle_set_schedule should pass client.set_charge_schedule to request_command."""
     from aioratio.models import ChargeSchedule
 
@@ -79,26 +93,27 @@ async def test_set_schedule_calls_client_directly(hass: HomeAssistant) -> None:
     coordinator = MagicMock()
     coordinator.request_command = AsyncMock()
 
-    hass.data[DOMAIN] = {"entry1": {"client": client, "coordinator": coordinator}}
+    entry = _make_entry(hass)
+    hass.data[DOMAIN] = {entry.entry_id: {"client": client, "coordinator": coordinator}}
 
-    device = _make_device(config_entries={"entry1"}, serial="SN-SCH")
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "SN-SCH")},
+    )
 
-    with patch("custom_components.ratio.services.dr.async_get") as mock_dr:
-        mock_dr.return_value.async_get.return_value = device
-
-        await async_setup_services(hass)
-        try:
-            await hass.services.async_call(
-                DOMAIN,
-                "set_schedule",
-                {
-                    "device_id": "dev_123",
-                    "slots": [{"start": "22:00", "end": "06:00", "days": ["monday"]}],
-                },
-                blocking=True,
-            )
-        finally:
-            await async_unload_services(hass)
+    await async_setup_services(hass)
+    try:
+        await hass.services.async_call(
+            DOMAIN,
+            "set_schedule",
+            {
+                "device_id": device.id,
+                "slots": [{"start": "22:00", "end": "06:00", "days": ["monday"]}],
+            },
+            blocking=True,
+        )
+    finally:
+        await async_unload_services(hass)
 
     coordinator.request_command.assert_awaited_once()
     args = coordinator.request_command.await_args.args
@@ -118,7 +133,8 @@ async def test_add_vehicle_returns_vehicle_id_in_response(
     coordinator = MagicMock()
     coordinator.async_request_refresh = AsyncMock()
 
-    hass.data[DOMAIN] = {"entry1": {"client": client, "coordinator": coordinator}}
+    entry = _make_entry(hass)
+    hass.data[DOMAIN] = {entry.entry_id: {"client": client, "coordinator": coordinator}}
 
     await async_setup_services(hass)
     try:
@@ -157,7 +173,8 @@ async def test_remove_vehicle_clears_stale_preferred_entries(
         "SN003": "v-doomed",
     }
 
-    hass.data[DOMAIN] = {"entry1": {"client": client, "coordinator": coordinator}}
+    entry = _make_entry(hass)
+    hass.data[DOMAIN] = {entry.entry_id: {"client": client, "coordinator": coordinator}}
 
     await async_setup_services(hass)
     try:
@@ -206,8 +223,9 @@ async def test_import_session_history_imports_for_window(
     history = MagicMock()
     history.async_import_window = AsyncMock(return_value={serial: 2})
 
+    entry = _make_entry(hass)
     hass.data[DOMAIN] = {
-        "entry1": {
+        entry.entry_id: {
             "client": client,
             "coordinator": main,
             "history_coordinator": history,
@@ -245,11 +263,10 @@ async def test_history_coordinator_async_import_window(
     hass: HomeAssistant,
 ) -> None:
     """RatioHistoryCoordinator.async_import_window fetches and imports for each serial."""
-    from unittest.mock import patch as _patch
-
     from aioratio.models import ChargerOverview
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-    from homeassistant.config_entries import ConfigEntry
+    from homeassistant.config_entries import ConfigEntryState
 
     from custom_components.ratio.coordinator import RatioHistoryCoordinator
 
@@ -265,7 +282,13 @@ async def test_history_coordinator_async_import_window(
     client.session_history = AsyncMock(
         return_value=SessionHistoryPage(sessions=[s1], next_token=None)
     )
-    entry = MagicMock(spec=ConfigEntry, entry_id="ew")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        entry_id="ew",
+    )
+    entry.add_to_hass(hass)
+    entry._async_set_state(hass, ConfigEntryState.SETUP_IN_PROGRESS, None)
     coord = RatioHistoryCoordinator(hass, client, entry)
 
     main = MagicMock()
@@ -280,7 +303,7 @@ async def test_history_coordinator_async_import_window(
     begin = datetime(2023, 11, 1, tzinfo=timezone.utc)
     end = datetime(2023, 12, 1, tzinfo=timezone.utc)
 
-    with _patch(
+    with patch(
         "custom_components.ratio.coordinator.async_import_sessions",
         new=AsyncMock(side_effect=_fake),
     ) as mock_import:
