@@ -9,7 +9,8 @@ import voluptuous as vol
 from aioratio import MemoryTokenStore, RatioClient
 from aioratio.exceptions import RatioAuthError, RatioConnectionError, RatioError
 
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow
+from homeassistant.data_entry_flow import FlowResult as ConfigFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
