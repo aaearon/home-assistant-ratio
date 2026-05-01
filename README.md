@@ -29,7 +29,7 @@ Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/
 
 Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
 
-Home Assistant will install `aioratio==0.4.0` from PyPI automatically; no extra Python deps to manage.
+Home Assistant will install `aioratio==0.5.0` from PyPI automatically; no extra Python deps to manage.
 
 ## What you get
 
@@ -80,7 +80,7 @@ Target a specific charger via Home Assistant's device picker (`device_id`).
 +--------------------|-----+
                      v
               +---------------+
-              |   aioratio    |   <-- pinned: aioratio==0.4.0
+              |   aioratio    |   <-- pinned: aioratio==0.5.0
               |  (PyPI lib)   |
               +-------|-------+
                       v
@@ -122,7 +122,7 @@ pytest
 Bumping the library:
 
 1. Land changes in [`aioratio`](https://github.com/aaearon/aioratio), tag a release, watch CI publish to PyPI.
-2. Update `custom_components/ratio/manifest.json` `requirements` pin (e.g. `"aioratio==0.4.0"`).
+2. Update `custom_components/ratio/manifest.json` `requirements` pin (e.g. `"aioratio==0.5.0"`).
 3. Bump `manifest.json` `version` and tag the integration release.
 
 The pin is `==`, not `>=`, matching HA Core convention.

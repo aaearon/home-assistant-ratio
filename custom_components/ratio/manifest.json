@@ -1,12 +1,12 @@
 {
   "domain": "ratio",
   "name": "Ratio EV Charging",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "codeowners": ["@aaearon"],
   "config_flow": true,
   "documentation": "https://github.com/aaearon/home-assistant-ratio",
   "issue_tracker": "https://github.com/aaearon/home-assistant-ratio/issues",
   "integration_type": "hub",
   "iot_class": "cloud_polling",
-  "requirements": ["aioratio==0.4.0"]
+  "requirements": ["aioratio==0.5.0"]
 }
