@@ -174,9 +174,8 @@ async def test_import_session_history_imports_for_window(
     begin_dt = datetime(2023, 11, 1, tzinfo=timezone.utc)
     end_dt = datetime(2023, 12, 1, tzinfo=timezone.utc)
 
-    with patch.object(
-        history, "async_import_window", new=AsyncMock(return_value={"SN-IMP": 2})
-    ):
+    mock_import_window = AsyncMock(return_value={"SN-IMP": 2})
+    with patch.object(history, "async_import_window", new=mock_import_window):
         response = await hass.services.async_call(
             DOMAIN,
             SERVICE_IMPORT_SESSION_HISTORY,
@@ -186,6 +185,10 @@ async def test_import_session_history_imports_for_window(
         )
 
     assert response == {"imported": {"SN-IMP": 2}}
+    mock_import_window.assert_awaited_once()
+    call_kwargs = mock_import_window.await_args.kwargs
+    assert int(call_kwargs["begin_time"].timestamp()) == int(begin_dt.timestamp())
+    assert int(call_kwargs["end_time"].timestamp()) == int(end_dt.timestamp())
 
 
 @pytest.mark.asyncio
@@ -214,13 +217,11 @@ async def test_history_coordinator_async_import_window(
         return_value=SessionHistoryPage(sessions=[s1], next_token=None)
     )
 
-    # Populate the main coordinator with a charger so async_import_window
-    # knows which serials to iterate.
     from custom_components.ratio.coordinator import RatioData
 
-    coordinator.data = RatioData(
+    coordinator.async_set_updated_data(RatioData(
         chargers={serial: ChargerOverview.from_dict({"serialNumber": serial})}
-    )
+    ))
 
     async def _fake(hass, ser, sessions, starting_total):
         return float(starting_total) + sum(s.total_charging_energy for s in sessions)

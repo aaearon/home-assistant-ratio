@@ -10,6 +10,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from custom_components.ratio.const import DOMAIN
 from custom_components.ratio.coordinator import (
@@ -75,7 +76,7 @@ async def test_first_run_backfill_uses_30_days(
     hass: HomeAssistant, freezer
 ) -> None:
     freezer.move_to("2024-06-15T12:00:00+00:00")
-    frozen_ts = 1718452800  # 2024-06-15T12:00:00Z
+    frozen_ts = int(dt_util.utcnow().timestamp())
 
     serial = "ABC123"
     client = MagicMock()
