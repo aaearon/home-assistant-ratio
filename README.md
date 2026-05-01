@@ -89,7 +89,7 @@ Target a specific charger via Home Assistant's device picker (`device_id`).
 
 - One `DataUpdateCoordinator` per config entry (account). All entities for all chargers under that account share it. The coordinator calls `chargers_overview()` (a single aggregate cloud call) per poll and entities select their slice.
 - Token storage uses `aioratio.JsonFileTokenStore` rooted at `hass.config.path(".storage/ratio_<entry_id>.tokens")`. The Cognito DeviceKey/DeviceGroupKey/DevicePassword are persisted alongside the access/refresh tokens so subsequent restarts use the DEVICE_SRP_AUTH fast-path without re-prompting.
-- On `RatioAuthError` from the coordinator, HA triggers reauth and prompts for a new password.
+- On `RatioAuthError` during initial login or coordinator refresh, HA raises `ConfigEntryAuthFailed`, triggers reauth, and prompts for a new password. If setup fails after the client has connected, the client session is cleaned up before re-raising.
 
 ## Known limitations
 
