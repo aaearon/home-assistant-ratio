@@ -6,14 +6,17 @@ import logging
 from aioratio import RatioClient
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import RatioConfigEntry
 from .const import DOMAIN
 from .coordinator import RatioCoordinator
+
+PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,24 +27,23 @@ _CHARGE_MODE_FALLBACK = ["Smart", "SmartSolar", "PureSolar"]
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: RatioConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Ratio selects from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: RatioCoordinator = data["coordinator"]
-    client: RatioClient = data["client"]
+    coordinator = entry.runtime_data.coordinator
+    client = entry.runtime_data.client
 
     known: set[str] = set()
 
     @callback
     def _add_new() -> None:
         if coordinator.data is None:
-            return
+            return  # type: ignore[unreachable]
         new = set(coordinator.data.chargers) - known
         if not new:
             return
-        entities: list[CoordinatorEntity] = []
+        entities: list[SelectEntity] = []
         for serial in new:
             entities.append(RatioChargeModeSelect(coordinator, client, serial))
             entities.append(RatioActiveVehicleSelect(coordinator, client, serial))
@@ -81,6 +83,7 @@ class RatioChargeModeSelect(_RatioSelectBase):
 
     _attr_translation_key = "charge_mode"
     _attr_name = "Charge mode"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -93,7 +96,7 @@ class RatioChargeModeSelect(_RatioSelectBase):
     @property
     def options(self) -> list[str]:
         if self.coordinator.data is None:
-            return list(_CHARGE_MODE_FALLBACK)
+            return list(_CHARGE_MODE_FALLBACK)  # type: ignore[unreachable]
         settings = self.coordinator.data.user_settings.get(self._serial)
         if settings is None or settings.charging_mode is None:
             return list(_CHARGE_MODE_FALLBACK)
@@ -102,7 +105,7 @@ class RatioChargeModeSelect(_RatioSelectBase):
     @property
     def current_option(self) -> str | None:
         if self.coordinator.data is None:
-            return None
+            return None  # type: ignore[unreachable]
         settings = self.coordinator.data.user_settings.get(self._serial)
         if settings is None or settings.charging_mode is None:
             return None
@@ -128,6 +131,7 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
 
     _attr_translation_key = "active_vehicle"
     _attr_name = "Active vehicle"
+    _attr_entity_category = EntityCategory.CONFIG
 
     def __init__(
         self,
@@ -140,11 +144,12 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
     def _display_names(self) -> dict[str, str]:
         """Map vehicle_id -> display name, disambiguating duplicates."""
         if self.coordinator.data is None:
-            return {}
+            return {}  # type: ignore[unreachable]
         vehicles = [v for v in self.coordinator.data.vehicles if v.vehicle_id is not None]
         raw_names: dict[str, str] = {}
         for v in vehicles:
-            raw_names[v.vehicle_id] = v.vehicle_name or v.vehicle_id
+            vid: str = v.vehicle_id  # type: ignore[assignment]
+            raw_names[vid] = v.vehicle_name or vid
         # Find duplicates
         from collections import Counter
 
@@ -173,7 +178,7 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
         if preferred is not None:
             return self._name_for(preferred)
         if self.coordinator.data is None:
-            return None
+            return None  # type: ignore[unreachable]
         ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None or ov.charge_session_status is None:
             return None

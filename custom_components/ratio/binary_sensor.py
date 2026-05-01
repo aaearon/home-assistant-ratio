@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from aioratio.models import ChargerOverview
 
@@ -11,18 +12,20 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import RatioConfigEntry
 from .const import DOMAIN
 from .coordinator import RatioCoordinator
 
+PARALLEL_UPDATES = 0
 
-@dataclass(kw_only=True)
+
+@dataclass(frozen=True, kw_only=True)
 class RatioBinarySensorEntityDescription(BinarySensorEntityDescription):
     """Describes a Ratio binary sensor."""
 
@@ -30,7 +33,7 @@ class RatioBinarySensorEntityDescription(BinarySensorEntityDescription):
     attrs_fn: Callable[[ChargerOverview], dict[str, Any]] | None = None
 
 
-def _ind(ov: ChargerOverview):
+def _ind(ov: ChargerOverview) -> Any:
     return (
         ov.charger_status.indicators
         if ov.charger_status is not None and ov.charger_status.indicators is not None
@@ -94,7 +97,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, ...] = (
 )
 
 
-def _fw(ov: ChargerOverview):
+def _fw(ov: ChargerOverview) -> Any:
     return ov.charger_firmware_status
 
 
@@ -132,17 +135,17 @@ def _build_binary_sensor_entities(
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: RatioConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Ratio binary sensors from a config entry."""
-    coordinator: RatioCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
+    coordinator = entry.runtime_data.coordinator
     known: set[str] = set()
 
     @callback
     def _add_new() -> None:
         if coordinator.data is None:
-            return
+            return  # type: ignore[unreachable]
         new = set(coordinator.data.chargers) - known
         if not new:
             return
@@ -182,7 +185,7 @@ class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity)
     @property
     def is_on(self) -> bool | None:
         if self.coordinator.data is None:
-            return None
+            return None  # type: ignore[unreachable]
         ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None:
             return None

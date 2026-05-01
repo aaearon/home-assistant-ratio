@@ -1,2 +1,25 @@
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+addopts = "--cov=custom_components/ratio --cov-report=term-missing"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = "aioratio.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "homeassistant.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "voluptuous.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pytest_homeassistant_custom_component.*"
+ignore_missing_imports = true

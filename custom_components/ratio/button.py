@@ -7,39 +7,40 @@ from aioratio import RatioClient
 from aioratio.models import ChargerOverview
 
 from homeassistant.components.button import ButtonEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import RatioConfigEntry
 from .const import DOMAIN
 from .coordinator import RatioCoordinator
+
+PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: RatioConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Ratio buttons from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: RatioCoordinator = data["coordinator"]
-    client: RatioClient = data["client"]
+    coordinator = entry.runtime_data.coordinator
+    client = entry.runtime_data.client
 
     known: set[str] = set()
 
     @callback
     def _add_new() -> None:
         if coordinator.data is None:
-            return
+            return  # type: ignore[unreachable]
         new = set(coordinator.data.chargers) - known
         if not new:
             return
-        entities: list[CoordinatorEntity] = [
+        entities: list[ButtonEntity] = [
             RatioGrantUpgradePermissionButton(coordinator, client, serial)
             for serial in new
         ]
@@ -80,7 +81,7 @@ class RatioGrantUpgradePermissionButton(
     @property
     def _overview(self) -> ChargerOverview | None:
         if self.coordinator.data is None:
-            return None
+            return None  # type: ignore[unreachable]
         return self.coordinator.data.chargers.get(self._serial)
 
     def _job_ids(self) -> list[str]:

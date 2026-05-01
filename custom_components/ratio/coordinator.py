@@ -5,7 +5,9 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from datetime import datetime as _datetime_type
+from typing import Any
 
 from aioratio import RatioClient
 from aioratio.exceptions import (
@@ -66,7 +68,7 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         # Per-charger HA-side preferred vehicle for the next start_charge call.
         # Persisted via HA Store; loaded in async_load_preferences().
         self.preferred_vehicle: dict[str, str] = {}
-        self._prefs_store: Store = Store(
+        self._prefs_store: Store[dict[str, Any]] = Store(
             hass,
             STORAGE_VERSION,
             f"{DOMAIN}.{entry.entry_id}.{STORAGE_KEY_PREFERENCES}",
@@ -151,11 +153,11 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
                 user_settings[serial] = prev.user_settings[serial]
 
         solar_settings: dict[str, SolarSettings] = {}
-        for serial, settings in solar_results:
-            if settings is not None:
-                solar_settings[serial] = settings
-            elif prev is not None and serial in prev.solar_settings:
-                solar_settings[serial] = prev.solar_settings[serial]
+        for solar_serial, solar_setting in solar_results:
+            if solar_setting is not None:
+                solar_settings[solar_serial] = solar_setting
+            elif prev is not None and solar_serial in prev.solar_settings:
+                solar_settings[solar_serial] = prev.solar_settings[solar_serial]
 
         vehicles = (
             vehicles_result
@@ -182,11 +184,23 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
             result = await fn(*args, **kwargs)
         except RatioRateLimitError as err:
             # Don't trigger an immediate refresh — it would just hit 429 again.
-            raise HomeAssistantError(f"{name}: rate limited: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="rate_limited",
+                translation_placeholders={"command": name, "error": str(err)},
+            ) from err
         except RatioConnectionError as err:
-            raise HomeAssistantError(f"{name}: connection error: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="connection_error",
+                translation_placeholders={"command": name, "error": str(err)},
+            ) from err
         except RatioApiError as err:
-            raise HomeAssistantError(f"{name} failed: {err}") from err
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_failed",
+                translation_placeholders={"command": name, "error": str(err)},
+            ) from err
         await self.async_request_refresh()
         return result
 
@@ -223,6 +237,7 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         hass: HomeAssistant,
         client: RatioClient,
         entry: ConfigEntry,
+        main_coordinator: RatioCoordinator,
     ) -> None:
         super().__init__(
             hass,
@@ -233,7 +248,8 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         )
         self.client = client
         self.entry = entry
-        self._store: Store = Store(
+        self._main_coordinator = main_coordinator
+        self._store: Store[dict[str, Any]] = Store(
             hass,
             STORAGE_VERSION,
             f"{DOMAIN}.{entry.entry_id}.{STORAGE_KEY_HISTORY}",
@@ -308,8 +324,8 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
 
     async def async_import_window(
         self,
-        begin_time: "datetime | int",
-        end_time: "datetime | int | None" = None,
+        begin_time: _datetime_type | int,
+        end_time: _datetime_type | int | None = None,
     ) -> dict[str, int]:
         """Manually backfill external statistics for the given window.
 
@@ -327,22 +343,17 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         for initial setup or gap-filling only; re-adding the integration resets
         the live baseline cleanly.
         """
-        from datetime import datetime as _dt
-
-        def _to_epoch(v: "datetime | int") -> int:
-            if isinstance(v, _dt):
+        def _to_epoch(v: _datetime_type | int) -> int:
+            if isinstance(v, _datetime_type):
                 return int(v.timestamp())
             return int(v)
 
         begin_ts = _to_epoch(begin_time)
         end_ts = _to_epoch(end_time) if end_time is not None else None
 
-        main = self.hass.data.get(DOMAIN, {}).get(self.entry.entry_id, {}).get(
-            "coordinator"
-        )
         serials: list[str] = []
-        if main is not None and getattr(main, "data", None) is not None:
-            serials = list(main.data.chargers.keys())
+        if self._main_coordinator.data is not None:
+            serials = list(self._main_coordinator.data.chargers.keys())
 
         imported: dict[str, int] = {}
         for serial in serials:
@@ -365,14 +376,10 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         if not self._loaded:
             await self.async_load()
 
-        # We need the list of charger serials. Pull from the main coordinator
-        # via hass.data; if it's not there yet, fall back to an empty result.
-        main = self.hass.data.get(DOMAIN, {}).get(self.entry.entry_id, {}).get(
-            "coordinator"
-        )
+        # We need the list of charger serials from the main coordinator.
         serials: list[str] = []
-        if main is not None and getattr(main, "data", None) is not None:
-            serials = list(main.data.chargers.keys())
+        if self._main_coordinator.data is not None:
+            serials = list(self._main_coordinator.data.chargers.keys())
 
         now_ts = int(dt_util.utcnow().timestamp())
         result: dict[str, list[Session]] = {}

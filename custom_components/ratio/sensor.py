@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from aioratio.models import ChargerOverview
 from aioratio.models.history import Session
@@ -14,19 +15,21 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy, UnitOfPower, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import EntityCategory
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import RatioConfigEntry
 from .const import DOMAIN
 from .coordinator import RatioCoordinator, RatioHistoryCoordinator
 
+PARALLEL_UPDATES = 0
 
-@dataclass(kw_only=True)
+
+@dataclass(frozen=True, kw_only=True)
 class RatioSensorEntityDescription(SensorEntityDescription):
     """Describes a Ratio sensor."""
 
@@ -66,7 +69,7 @@ SENSOR_DESCRIPTIONS: tuple[RatioSensorEntityDescription, ...] = (
 )
 
 
-def _fw(ov: ChargerOverview):
+def _fw(ov: ChargerOverview) -> Any:
     return ov.charger_firmware_status
 
 
@@ -84,7 +87,7 @@ FIRMWARE_SENSOR_DESCRIPTIONS: tuple[RatioSensorEntityDescription, ...] = (
 )
 
 
-@dataclass(kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class RatioLastSessionSensorDescription(SensorEntityDescription):
     """Describes a last-session sensor backed by the history coordinator."""
 
@@ -92,7 +95,7 @@ class RatioLastSessionSensorDescription(SensorEntityDescription):
 
 
 def _last_session(history: RatioHistoryCoordinator, serial: str) -> Session | None:
-    data = getattr(history, "data", None)
+    data: dict[str, list[Session]] | None = getattr(history, "data", None)
     if not data:
         return None
     sessions = data.get(serial)
@@ -168,23 +171,22 @@ def _build_sensor_entities(
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: RatioConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Ratio sensors from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: RatioCoordinator = data["coordinator"]
-    history: RatioHistoryCoordinator | None = data.get("history_coordinator")
+    coordinator = entry.runtime_data.coordinator
+    history: RatioHistoryCoordinator | None = entry.runtime_data.history_coordinator
     known: set[str] = set()
 
     @callback
     def _add_new() -> None:
         if coordinator.data is None:
-            return
+            return  # type: ignore[unreachable]
         new = set(coordinator.data.chargers) - known
         if not new:
             return
-        entities: list[CoordinatorEntity] = []
+        entities: list[SensorEntity] = []
         for serial in new:
             entities.extend(_build_sensor_entities(coordinator, serial))
             if history is not None:
@@ -225,7 +227,7 @@ class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
     @property
     def _overview(self) -> ChargerOverview | None:
         if self.coordinator.data is None:
-            return None
+            return None  # type: ignore[unreachable]
         return self.coordinator.data.chargers.get(self._serial)
 
     @property

@@ -3,46 +3,48 @@ from __future__ import annotations
 
 import logging
 from dataclasses import replace
-from typing import Optional
+from typing import Any
 
 from aioratio import RatioClient
 from aioratio.models import SolarSettings, UserSettings
 from aioratio.models.settings import UpperLowerLimitSetting
 
 from homeassistant.components.number import NumberEntity, NumberMode
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfElectricCurrent, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from . import RatioConfigEntry
 from .const import DOMAIN
 from .coordinator import RatioCoordinator
+
+PARALLEL_UPDATES = 1
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: RatioConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up Ratio numbers from a config entry."""
-    data = hass.data[DOMAIN][entry.entry_id]
-    coordinator: RatioCoordinator = data["coordinator"]
-    client: RatioClient = data["client"]
+    coordinator = entry.runtime_data.coordinator
+    client = entry.runtime_data.client
 
     known: set[str] = set()
 
     @callback
     def _add_new() -> None:
         if coordinator.data is None:
-            return
+            return  # type: ignore[unreachable]
         new = set(coordinator.data.chargers) - known
         if not new:
             return
-        entities: list[CoordinatorEntity] = []
+        entities: list[NumberEntity] = []
         for serial in new:
             entities.append(RatioSunOnDelayMinutesNumber(coordinator, client, serial))
             entities.append(RatioSunOffDelayMinutesNumber(coordinator, client, serial))
@@ -62,6 +64,7 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
 
     _attr_has_entity_name = True
     _attr_mode = NumberMode.BOX
+    _attr_entity_category = EntityCategory.CONFIG
 
     # Subclasses set:
     _settings_parent: str  # "solar" or "user"
@@ -94,14 +97,14 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
 
     # ---- helpers ----
 
-    def _settings(self):
+    def _settings(self) -> Any:
         if self.coordinator.data is None:
-            return None
+            return None  # type: ignore[unreachable]
         if self._settings_parent == "solar":
             return self.coordinator.data.solar_settings.get(self._serial)
         return self.coordinator.data.user_settings.get(self._serial)
 
-    def _limit(self) -> Optional[UpperLowerLimitSetting]:
+    def _limit(self) -> UpperLowerLimitSetting | None:
         s = self._settings()
         if s is None:
             return None
@@ -169,7 +172,7 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
             new_field = replace(existing, value=value)
         else:
             new_field = UpperLowerLimitSetting(value=value)
-        modified = replace(current, **{self._field: new_field})
+        modified = replace(current, **{self._field: new_field})  # type: ignore[arg-type]
         await self.coordinator.request_command(
             self._client.set_user_settings, self._serial, modified
         )

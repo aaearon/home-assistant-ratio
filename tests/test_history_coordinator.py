@@ -44,15 +44,13 @@ def _make_entry(
     return entry
 
 
-def _stub_main_coordinator(
-    hass: HomeAssistant, entry_id: str, serials: list[str]
-) -> None:
+def _make_main_coordinator(serials: list[str]) -> MagicMock:
     chargers = {
         s: ChargerOverview.from_dict({"serialNumber": s}) for s in serials
     }
     main = MagicMock()
     main.data = RatioData(chargers=chargers)
-    hass.data.setdefault(DOMAIN, {}).setdefault(entry_id, {})["coordinator"] = main
+    return main
 
 
 def _patch_import() -> AsyncMock:
@@ -84,8 +82,8 @@ async def test_first_run_backfill_uses_30_days(
         return_value=SessionHistoryPage(sessions=[], next_token=None)
     )
     entry = _make_entry(hass)
-    coord = RatioHistoryCoordinator(hass, client, entry)
-    _stub_main_coordinator(hass, entry.entry_id, [serial])
+    main = _make_main_coordinator([serial])
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
 
     with _patch_import():
         await coord.async_config_entry_first_refresh()
@@ -101,7 +99,7 @@ async def test_dedup_across_two_polls_with_overlap(hass: HomeAssistant) -> None:
     serial = "S1"
     client = MagicMock()
     entry = _make_entry(hass, entry_id="e2")
-    _stub_main_coordinator(hass, entry.entry_id, [serial])
+    main = _make_main_coordinator([serial])
 
     s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
     s2 = _session("id-2", serial, 1_700_001_000, energy=2000)
@@ -109,7 +107,7 @@ async def test_dedup_across_two_polls_with_overlap(hass: HomeAssistant) -> None:
     client.session_history = AsyncMock(
         return_value=SessionHistoryPage(sessions=[s1, s2], next_token=None)
     )
-    coord = RatioHistoryCoordinator(hass, client, entry)
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
 
     with _patch_import() as mock_import:
         await coord.async_config_entry_first_refresh()
@@ -145,18 +143,18 @@ async def test_dedup_across_two_polls_with_overlap(hass: HomeAssistant) -> None:
 async def test_running_total_persists_across_restart(hass: HomeAssistant) -> None:
     serial = "S2"
     entry = _make_entry(hass, entry_id="e3")
-    _stub_main_coordinator(hass, entry.entry_id, [serial])
+    main = _make_main_coordinator([serial])
     client = MagicMock()
 
     s1 = _session("id-1", serial, 1_700_000_000, energy=1500)
     client.session_history = AsyncMock(
         return_value=SessionHistoryPage(sessions=[s1], next_token=None)
     )
-    coord1 = RatioHistoryCoordinator(hass, client, entry)
+    coord1 = RatioHistoryCoordinator(hass, client, entry, main)
     with _patch_import():
         await coord1.async_config_entry_first_refresh()
 
-    coord2 = RatioHistoryCoordinator(hass, client, entry)
+    coord2 = RatioHistoryCoordinator(hass, client, entry, main)
     await coord2.async_load()
     assert coord2._running_total[serial] == 1500.0
     assert serial in coord2._last_imported_end_time
@@ -180,7 +178,7 @@ async def test_running_total_persists_across_restart(hass: HomeAssistant) -> Non
 async def test_pagination_walks_next_tokens(hass: HomeAssistant) -> None:
     serial = "S3"
     entry = _make_entry(hass, entry_id="e4")
-    _stub_main_coordinator(hass, entry.entry_id, [serial])
+    main = _make_main_coordinator([serial])
 
     s1 = _session("a", serial, 1_700_000_000)
     s2 = _session("b", serial, 1_700_001_000)
@@ -193,7 +191,7 @@ async def test_pagination_walks_next_tokens(hass: HomeAssistant) -> None:
     ]
     client = MagicMock()
     client.session_history = AsyncMock(side_effect=pages)
-    coord = RatioHistoryCoordinator(hass, client, entry)
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
 
     with _patch_import() as mock_import:
         await coord.async_config_entry_first_refresh()

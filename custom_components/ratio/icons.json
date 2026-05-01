@@ -1,0 +1,65 @@
+{
+  "entity": {
+    "sensor": {
+      "cloud_connection_state": {
+        "default": "mdi:cloud-check-outline"
+      },
+      "charging_state": {
+        "default": "mdi:ev-station"
+      },
+      "last_session_vehicle": {
+        "default": "mdi:car"
+      }
+    },
+    "binary_sensor": {
+      "charging_paused": {
+        "default": "mdi:pause-circle-outline"
+      },
+      "charging_disabled": {
+        "default": "mdi:cancel"
+      },
+      "charging_authorized": {
+        "default": "mdi:shield-check-outline"
+      },
+      "power_reduced_by_dso": {
+        "default": "mdi:transmission-tower-off"
+      },
+      "firmware_update_allowed": {
+        "default": "mdi:cellphone-arrow-down"
+      }
+    },
+    "select": {
+      "charge_mode": {
+        "default": "mdi:cog"
+      },
+      "active_vehicle": {
+        "default": "mdi:car-connected"
+      }
+    },
+    "number": {
+      "sun_on_delay_minutes": {
+        "default": "mdi:weather-sunny-alert"
+      },
+      "sun_off_delay_minutes": {
+        "default": "mdi:weather-sunny-off"
+      },
+      "pure_solar_starting_current": {
+        "default": "mdi:solar-power"
+      },
+      "smart_solar_starting_current": {
+        "default": "mdi:solar-power-variant"
+      },
+      "maximum_charging_current": {
+        "default": "mdi:current-ac"
+      },
+      "minimum_charging_current": {
+        "default": "mdi:current-ac"
+      }
+    },
+    "button": {
+      "grant_upgrade_permission": {
+        "default": "mdi:cellphone-arrow-down"
+      }
+    }
+  }
+}

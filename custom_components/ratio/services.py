@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from aioratio import RatioClient
@@ -19,7 +19,7 @@ from homeassistant.core import (
     ServiceResponse,
     SupportsResponse,
 )
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 
 from .const import (
@@ -38,6 +38,9 @@ from .const import (
     SERVICE_STOP_CHARGE,
 )
 from .coordinator import RatioCoordinator, RatioHistoryCoordinator
+
+if TYPE_CHECKING:
+    from . import RatioRuntimeData
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -98,27 +101,41 @@ def _resolve_serials(hass: HomeAssistant, call: ServiceCall) -> list[tuple[str, 
     if isinstance(device_ids, str):
         device_ids = [device_ids]
 
+    loaded_ids = {
+        e.entry_id for e in hass.config_entries.async_loaded_entries(DOMAIN)
+    }
+
     device_reg = dr.async_get(hass)
     pairs: list[tuple[str, str]] = []
     for dev_id in device_ids:
         device = device_reg.async_get(dev_id)
         if device is None:
-            raise HomeAssistantError(f"Unknown device {dev_id}")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="unknown_device",
+                translation_placeholders={"device_id": dev_id},
+            )
         serial: str | None = None
         for ident in device.identifiers:
             if ident[0] == DOMAIN:
                 serial = ident[1]
                 break
         if serial is None:
-            raise HomeAssistantError(f"Device {dev_id} is not a Ratio charger")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="not_ratio_charger",
+                translation_placeholders={"device_id": dev_id},
+            )
 
         entry_id = next(
-            (eid for eid in device.config_entries if eid in hass.data.get(DOMAIN, {})),
+            (eid for eid in device.config_entries if eid in loaded_ids),
             None,
         )
         if entry_id is None:
-            raise HomeAssistantError(
-                f"No active Ratio config entry for device {dev_id}"
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="no_active_config_entry",
+                translation_placeholders={"device_id": dev_id},
             )
         pairs.append((entry_id, serial))
     return pairs
@@ -127,8 +144,14 @@ def _resolve_serials(hass: HomeAssistant, call: ServiceCall) -> list[tuple[str, 
 def _client_and_coordinator(
     hass: HomeAssistant, entry_id: str
 ) -> tuple[RatioClient, RatioCoordinator]:
-    data = hass.data[DOMAIN][entry_id]
-    return data["client"], data["coordinator"]
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="config_entry_not_found",
+            translation_placeholders={"entry_id": entry_id},
+        )
+    return entry.runtime_data.client, entry.runtime_data.coordinator
 
 
 async def _handle_start_charge(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -148,20 +171,26 @@ async def _handle_stop_charge(hass: HomeAssistant, call: ServiceCall) -> None:
         await coordinator.request_command(client.stop_charge, serial)
 
 
-def _all_entries(hass: HomeAssistant) -> list[dict[str, Any]]:
-    """Return all per-entry data dicts for the integration."""
-    return list(hass.data.get(DOMAIN, {}).values())
+def _all_entries(hass: HomeAssistant) -> list[RatioRuntimeData]:
+    """Return all runtime data for loaded integration entries."""
+    return [
+        e.runtime_data
+        for e in hass.config_entries.async_loaded_entries(DOMAIN)
+    ]
 
 
-def _single_entry(hass: HomeAssistant) -> dict[str, Any]:
-    """Return the only entry's data dict, or raise if 0 or >1 are loaded."""
+def _single_entry(hass: HomeAssistant) -> RatioRuntimeData:
+    """Return the only entry's runtime data, or raise if 0 or >1 are loaded."""
     entries = _all_entries(hass)
     if not entries:
-        raise HomeAssistantError("No Ratio config entry is loaded")
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="no_config_entry_loaded",
+        )
     if len(entries) > 1:
-        raise HomeAssistantError(
-            "Multiple Ratio accounts are configured; this service does not "
-            "yet support targeting a specific account"
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="multiple_accounts",
         )
     return entries[0]
 
@@ -169,9 +198,9 @@ def _single_entry(hass: HomeAssistant) -> dict[str, Any]:
 async def _handle_add_vehicle(
     hass: HomeAssistant, call: ServiceCall
 ) -> ServiceResponse:
-    data = _single_entry(hass)
-    client: RatioClient = data["client"]
-    coordinator: RatioCoordinator = data["coordinator"]
+    runtime = _single_entry(hass)
+    client = runtime.client
+    coordinator = runtime.coordinator
     vehicle = Vehicle(
         vehicle_name=call.data[ATTR_VEHICLE_NAME],
         license_plate=call.data.get(ATTR_LICENSE_PLATE),
@@ -179,30 +208,52 @@ async def _handle_add_vehicle(
     try:
         created = await client.add_vehicle(vehicle)
     except RatioRateLimitError as err:
-        raise HomeAssistantError(f"add_vehicle: rate limited: {err}") from err
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="rate_limited",
+            translation_placeholders={"command": "add_vehicle", "error": str(err)},
+        ) from err
     except RatioConnectionError as err:
-        raise HomeAssistantError(f"add_vehicle: connection error: {err}") from err
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="connection_error",
+            translation_placeholders={"command": "add_vehicle", "error": str(err)},
+        ) from err
     except RatioApiError as err:
-        raise HomeAssistantError(f"add_vehicle failed: {err}") from err
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="command_failed",
+            translation_placeholders={"command": "add_vehicle", "error": str(err)},
+        ) from err
     await coordinator.async_request_refresh()
     return {"vehicle_id": created.vehicle_id}
 
 
 async def _handle_remove_vehicle(hass: HomeAssistant, call: ServiceCall) -> None:
-    data = _single_entry(hass)
-    client: RatioClient = data["client"]
-    coordinator: RatioCoordinator = data["coordinator"]
+    runtime = _single_entry(hass)
+    client = runtime.client
+    coordinator = runtime.coordinator
     vehicle_id: str = call.data[ATTR_VEHICLE_ID]
     try:
         await client.remove_vehicle(vehicle_id)
     except RatioRateLimitError as err:
-        raise HomeAssistantError(f"remove_vehicle: rate limited: {err}") from err
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="rate_limited",
+            translation_placeholders={"command": "remove_vehicle", "error": str(err)},
+        ) from err
     except RatioConnectionError as err:
         raise HomeAssistantError(
-            f"remove_vehicle: connection error: {err}"
+            translation_domain=DOMAIN,
+            translation_key="connection_error",
+            translation_placeholders={"command": "remove_vehicle", "error": str(err)},
         ) from err
     except RatioApiError as err:
-        raise HomeAssistantError(f"remove_vehicle failed: {err}") from err
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="command_failed",
+            translation_placeholders={"command": "remove_vehicle", "error": str(err)},
+        ) from err
     await coordinator.async_request_refresh()
 
     # Drop any preferred_vehicle entries that pointed at the removed vehicle.
@@ -216,8 +267,8 @@ async def _handle_remove_vehicle(hass: HomeAssistant, call: ServiceCall) -> None
 async def _handle_import_session_history(
     hass: HomeAssistant, call: ServiceCall
 ) -> ServiceResponse:
-    data = _single_entry(hass)
-    history: RatioHistoryCoordinator = data["history_coordinator"]
+    runtime = _single_entry(hass)
+    history = runtime.history_coordinator
     begin_time = call.data[ATTR_BEGIN_TIME]
     end_time = call.data.get(ATTR_END_TIME)
     try:
@@ -226,15 +277,23 @@ async def _handle_import_session_history(
         )
     except RatioRateLimitError as err:
         raise HomeAssistantError(
-            f"import_session_history: rate limited: {err}"
+            translation_domain=DOMAIN,
+            translation_key="rate_limited",
+            translation_placeholders={"command": "import_session_history", "error": str(err)},
         ) from err
     except RatioConnectionError as err:
         raise HomeAssistantError(
-            f"import_session_history: connection error: {err}"
+            translation_domain=DOMAIN,
+            translation_key="connection_error",
+            translation_placeholders={"command": "import_session_history", "error": str(err)},
         ) from err
     except RatioApiError as err:
-        raise HomeAssistantError(f"import_session_history failed: {err}") from err
-    return {"imported": imported}
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="command_failed",
+            translation_placeholders={"command": "import_session_history", "error": str(err)},
+        ) from err
+    return {"imported": imported}  # type: ignore[dict-item]
 
 
 async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
