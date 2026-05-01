@@ -52,6 +52,7 @@ async def test_setup_entry_calls_async_setup_services(hass: HomeAssistant) -> No
     ):
         coord_instance = MagicMock()
         coord_instance.async_config_entry_first_refresh = AsyncMock()
+        coord_instance.async_load_preferences = AsyncMock()
         mock_coord_cls.return_value = coord_instance
 
         entry = _make_config_entry(hass)
@@ -94,6 +95,7 @@ async def test_client_cleanup_on_coordinator_failure(
         coord_instance.async_config_entry_first_refresh = AsyncMock(
             side_effect=RuntimeError("update failed")
         )
+        coord_instance.async_load_preferences = AsyncMock()
         mock_coord_cls.return_value = coord_instance
 
         entry = _make_config_entry(hass)

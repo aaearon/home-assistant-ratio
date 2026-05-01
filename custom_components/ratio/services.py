@@ -6,21 +6,38 @@ from typing import Any
 
 import voluptuous as vol
 from aioratio import RatioClient
-from aioratio.models import ChargeSchedule, ScheduleSlot
+from aioratio.exceptions import (
+    RatioApiError,
+    RatioConnectionError,
+    RatioRateLimitError,
+)
+from aioratio.models import ChargeSchedule, ScheduleSlot, Vehicle
 
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import config_validation as cv, device_registry as dr
 
 from .const import (
+    ATTR_BEGIN_TIME,
+    ATTR_END_TIME,
+    ATTR_LICENSE_PLATE,
     ATTR_SLOTS,
     ATTR_VEHICLE_ID,
+    ATTR_VEHICLE_NAME,
     DOMAIN,
+    SERVICE_ADD_VEHICLE,
+    SERVICE_IMPORT_SESSION_HISTORY,
+    SERVICE_REMOVE_VEHICLE,
     SERVICE_SET_SCHEDULE,
     SERVICE_START_CHARGE,
     SERVICE_STOP_CHARGE,
 )
-from .coordinator import RatioCoordinator
+from .coordinator import RatioCoordinator, RatioHistoryCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -51,6 +68,26 @@ SET_SCHEDULE_SCHEMA = vol.Schema(
     {
         vol.Required("device_id"): vol.Any(cv.string, [cv.string]),
         vol.Required(ATTR_SLOTS): vol.All(cv.ensure_list, [SLOT_SCHEMA]),
+    }
+)
+
+ADD_VEHICLE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_VEHICLE_NAME): cv.string,
+        vol.Optional(ATTR_LICENSE_PLATE): cv.string,
+    }
+)
+
+REMOVE_VEHICLE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_VEHICLE_ID): cv.string,
+    }
+)
+
+IMPORT_SESSION_HISTORY_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_BEGIN_TIME): cv.datetime,
+        vol.Optional(ATTR_END_TIME): cv.datetime,
     }
 )
 
@@ -111,6 +148,95 @@ async def _handle_stop_charge(hass: HomeAssistant, call: ServiceCall) -> None:
         await coordinator.request_command(client.stop_charge, serial)
 
 
+def _all_entries(hass: HomeAssistant) -> list[dict[str, Any]]:
+    """Return all per-entry data dicts for the integration."""
+    return list(hass.data.get(DOMAIN, {}).values())
+
+
+def _single_entry(hass: HomeAssistant) -> dict[str, Any]:
+    """Return the only entry's data dict, or raise if 0 or >1 are loaded."""
+    entries = _all_entries(hass)
+    if not entries:
+        raise HomeAssistantError("No Ratio config entry is loaded")
+    if len(entries) > 1:
+        raise HomeAssistantError(
+            "Multiple Ratio accounts are configured; this service does not "
+            "yet support targeting a specific account"
+        )
+    return entries[0]
+
+
+async def _handle_add_vehicle(
+    hass: HomeAssistant, call: ServiceCall
+) -> ServiceResponse:
+    data = _single_entry(hass)
+    client: RatioClient = data["client"]
+    coordinator: RatioCoordinator = data["coordinator"]
+    vehicle = Vehicle(
+        vehicle_name=call.data[ATTR_VEHICLE_NAME],
+        license_plate=call.data.get(ATTR_LICENSE_PLATE),
+    )
+    try:
+        created = await client.add_vehicle(vehicle)
+    except RatioRateLimitError as err:
+        raise HomeAssistantError(f"add_vehicle: rate limited: {err}") from err
+    except RatioConnectionError as err:
+        raise HomeAssistantError(f"add_vehicle: connection error: {err}") from err
+    except RatioApiError as err:
+        raise HomeAssistantError(f"add_vehicle failed: {err}") from err
+    await coordinator.async_request_refresh()
+    return {"vehicle_id": created.vehicle_id}
+
+
+async def _handle_remove_vehicle(hass: HomeAssistant, call: ServiceCall) -> None:
+    data = _single_entry(hass)
+    client: RatioClient = data["client"]
+    coordinator: RatioCoordinator = data["coordinator"]
+    vehicle_id: str = call.data[ATTR_VEHICLE_ID]
+    try:
+        await client.remove_vehicle(vehicle_id)
+    except RatioRateLimitError as err:
+        raise HomeAssistantError(f"remove_vehicle: rate limited: {err}") from err
+    except RatioConnectionError as err:
+        raise HomeAssistantError(
+            f"remove_vehicle: connection error: {err}"
+        ) from err
+    except RatioApiError as err:
+        raise HomeAssistantError(f"remove_vehicle failed: {err}") from err
+    await coordinator.async_request_refresh()
+
+    # Drop any preferred_vehicle entries that pointed at the removed vehicle.
+    stale = [s for s, vid in coordinator.preferred_vehicle.items() if vid == vehicle_id]
+    if stale:
+        for s in stale:
+            coordinator.preferred_vehicle.pop(s, None)
+        await coordinator.async_save_preferences()
+
+
+async def _handle_import_session_history(
+    hass: HomeAssistant, call: ServiceCall
+) -> ServiceResponse:
+    data = _single_entry(hass)
+    history: RatioHistoryCoordinator = data["history_coordinator"]
+    begin_time = call.data[ATTR_BEGIN_TIME]
+    end_time = call.data.get(ATTR_END_TIME)
+    try:
+        imported = await history.async_import_window(
+            begin_time=begin_time, end_time=end_time
+        )
+    except RatioRateLimitError as err:
+        raise HomeAssistantError(
+            f"import_session_history: rate limited: {err}"
+        ) from err
+    except RatioConnectionError as err:
+        raise HomeAssistantError(
+            f"import_session_history: connection error: {err}"
+        ) from err
+    except RatioApiError as err:
+        raise HomeAssistantError(f"import_session_history failed: {err}") from err
+    return {"imported": imported}
+
+
 async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
     raw_slots = call.data[ATTR_SLOTS] or []
     slots = [ScheduleSlot.from_dict(s) for s in raw_slots]
@@ -151,9 +277,46 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         DOMAIN, SERVICE_SET_SCHEDULE, set_schedule, schema=SET_SCHEDULE_SCHEMA
     )
 
+    async def add_vehicle(call: ServiceCall) -> ServiceResponse:
+        return await _handle_add_vehicle(hass, call)
+
+    async def remove_vehicle(call: ServiceCall) -> None:
+        await _handle_remove_vehicle(hass, call)
+
+    async def import_session_history(call: ServiceCall) -> ServiceResponse:
+        return await _handle_import_session_history(hass, call)
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_ADD_VEHICLE,
+        add_vehicle,
+        schema=ADD_VEHICLE_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REMOVE_VEHICLE,
+        remove_vehicle,
+        schema=REMOVE_VEHICLE_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_IMPORT_SESSION_HISTORY,
+        import_session_history,
+        schema=IMPORT_SESSION_HISTORY_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
 
 async def async_unload_services(hass: HomeAssistant) -> None:
     """Remove Ratio services."""
-    for svc in (SERVICE_START_CHARGE, SERVICE_STOP_CHARGE, SERVICE_SET_SCHEDULE):
+    for svc in (
+        SERVICE_START_CHARGE,
+        SERVICE_STOP_CHARGE,
+        SERVICE_SET_SCHEDULE,
+        SERVICE_ADD_VEHICLE,
+        SERVICE_REMOVE_VEHICLE,
+        SERVICE_IMPORT_SESSION_HISTORY,
+    ):
         if hass.services.has_service(DOMAIN, svc):
             hass.services.async_remove(DOMAIN, svc)
