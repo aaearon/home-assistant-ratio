@@ -37,10 +37,20 @@ STOP_CHARGE_SCHEMA = vol.Schema(
     }
 )
 
+SLOT_SCHEMA = vol.Schema(
+    {
+        vol.Optional("start"): cv.string,
+        vol.Optional("startTime"): cv.string,
+        vol.Optional("end"): cv.string,
+        vol.Optional("endTime"): cv.string,
+        vol.Optional("days"): vol.All(cv.ensure_list, [cv.string]),
+    }
+)
+
 SET_SCHEDULE_SCHEMA = vol.Schema(
     {
         vol.Required("device_id"): vol.Any(cv.string, [cv.string]),
-        vol.Required(ATTR_SLOTS): list,
+        vol.Required(ATTR_SLOTS): vol.All(cv.ensure_list, [SLOT_SCHEMA]),
     }
 )
 
@@ -65,8 +75,11 @@ def _resolve_serials(hass: HomeAssistant, call: ServiceCall) -> list[tuple[str, 
         if serial is None:
             raise HomeAssistantError(f"Device {dev_id} is not a Ratio charger")
 
-        entry_id = next(iter(device.config_entries), None)
-        if entry_id is None or entry_id not in hass.data.get(DOMAIN, {}):
+        entry_id = next(
+            (eid for eid in device.config_entries if eid in hass.data.get(DOMAIN, {})),
+            None,
+        )
+        if entry_id is None:
             raise HomeAssistantError(
                 f"No active Ratio config entry for device {dev_id}"
             )
@@ -100,7 +113,7 @@ async def _handle_stop_charge(hass: HomeAssistant, call: ServiceCall) -> None:
 
 async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
     raw_slots = call.data[ATTR_SLOTS] or []
-    slots = [ScheduleSlot.from_dict(s) for s in raw_slots if isinstance(s, dict)]
+    slots = [ScheduleSlot.from_dict(s) for s in raw_slots]
     schedule = ChargeSchedule(enabled=True, slots=slots)
     for entry_id, serial in _resolve_serials(hass, call):
         client, coordinator = _client_and_coordinator(hass, entry_id)

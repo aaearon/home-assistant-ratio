@@ -136,23 +136,35 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
     ) -> None:
         super().__init__(coordinator, client, serial, "active_vehicle")
 
+    def _display_names(self) -> dict[str, str]:
+        """Map vehicle_id -> display name, disambiguating duplicates."""
+        if self.coordinator.data is None:
+            return {}
+        vehicles = [v for v in self.coordinator.data.vehicles if v.vehicle_id is not None]
+        raw_names: dict[str, str] = {}
+        for v in vehicles:
+            raw_names[v.vehicle_id] = v.vehicle_name or v.vehicle_id
+        # Find duplicates
+        from collections import Counter
+
+        counts = Counter(raw_names.values())
+        result: dict[str, str] = {}
+        for vid, name in raw_names.items():
+            if counts[name] > 1:
+                result[vid] = f"{name} ({vid})"
+            else:
+                result[vid] = name
+        return result
+
     def _name_for(self, vehicle_id: str | None) -> str | None:
-        if vehicle_id is None or self.coordinator.data is None:
+        if vehicle_id is None:
             return None
-        for v in self.coordinator.data.vehicles:
-            if v.vehicle_id == vehicle_id:
-                return v.vehicle_name or v.vehicle_id
-        return vehicle_id
+        names = self._display_names()
+        return names.get(vehicle_id, vehicle_id)
 
     @property
     def options(self) -> list[str]:
-        if self.coordinator.data is None:
-            return []
-        return [
-            (v.vehicle_name or v.vehicle_id)
-            for v in self.coordinator.data.vehicles
-            if v.vehicle_id is not None
-        ]
+        return list(self._display_names().values())
 
     @property
     def current_option(self) -> str | None:
@@ -167,12 +179,10 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
         return self._name_for(ov.charge_session_status.vehicle_id)
 
     async def async_select_option(self, option: str) -> None:
-        if self.coordinator.data is None:
-            return
-        for v in self.coordinator.data.vehicles:
-            display = v.vehicle_name or v.vehicle_id
-            if display == option and v.vehicle_id is not None:
-                self.coordinator.preferred_vehicle[self._serial] = v.vehicle_id
+        names = self._display_names()
+        for vid, display in names.items():
+            if display == option:
+                self.coordinator.preferred_vehicle[self._serial] = vid
                 self.async_write_ha_state()
                 return
         _LOGGER.warning("active_vehicle option %s did not match any known vehicle", option)
