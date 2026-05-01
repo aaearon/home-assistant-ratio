@@ -11,6 +11,7 @@ match the statistic_id domain prefix (``ratio``).
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Iterable
 
@@ -30,9 +31,19 @@ from .const import DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 
+def _slugify_serial(serial: str) -> str:
+    """Normalize a charger serial into a valid HA statistic_id slug.
+
+    HA requires ``[a-z0-9_]+`` with no leading/trailing/double underscores.
+    """
+    slug = re.sub(r"[^a-z0-9]", "_", serial.lower())
+    slug = re.sub(r"_+", "_", slug)
+    return slug.strip("_")
+
+
 def statistic_id_for(serial: str) -> str:
     """Return the external statistic_id for a charger serial."""
-    return f"{DOMAIN}:energy_{serial}"
+    return f"{DOMAIN}:energy_{_slugify_serial(serial)}"
 
 
 def _floor_hour(ts: int) -> datetime:

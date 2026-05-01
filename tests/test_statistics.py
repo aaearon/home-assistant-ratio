@@ -24,13 +24,19 @@ def _session(sid: str, begin_ts: int, energy: int) -> Session:
 
 def test_metadata_is_consistent() -> None:
     meta = build_metadata("ABC123")
-    assert meta["statistic_id"] == "ratio:energy_ABC123"
+    assert meta["statistic_id"] == "ratio:energy_abc123"
     assert meta["source"] == "ratio"
     assert meta["unit_of_measurement"] == "Wh"
     assert meta["has_sum"] is True
     assert meta["has_mean"] is False
     assert meta["name"] == "Ratio Charger Energy ABC123"
-    assert statistic_id_for("ABC123") == "ratio:energy_ABC123"
+    assert statistic_id_for("ABC123") == "ratio:energy_abc123"
+
+
+def test_statistic_id_slugifies_serial() -> None:
+    assert statistic_id_for("ABC-123") == "ratio:energy_abc_123"
+    assert statistic_id_for("abc123") == "ratio:energy_abc123"
+    assert statistic_id_for("EVB--X") == "ratio:energy_evb_x"
 
 
 def test_build_statistics_monotonic_sum_and_hour_floor() -> None:
