@@ -1,9 +1,12 @@
 """Select platform for Ratio EV Charging."""
 from __future__ import annotations
 
+import dataclasses
 import logging
+from typing import Any
 
 from aioratio import RatioClient
+from aioratio.models import CpmsConfig, InstallerOcppSettings
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.core import HomeAssistant, callback
@@ -47,6 +50,7 @@ async def async_setup_entry(
         for serial in new:
             entities.append(RatioChargeModeSelect(coordinator, client, serial))
             entities.append(RatioActiveVehicleSelect(coordinator, client, serial))
+            entities.append(RatioCpmsSelect(coordinator, client, serial))
         known.update(new)
         async_add_entities(entities)
 
@@ -193,3 +197,98 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
                 self.async_write_ha_state()
                 return
         _LOGGER.warning("active_vehicle option %s did not match any known vehicle", option)
+
+
+class RatioCpmsSelect(_RatioSelectBase):
+    """Select for the configured CPMS (Central Point Management System).
+
+    Options come from the operator-provided list endpoint. Falls back to
+    showing the currently-configured CPMS as the sole option when the list
+    endpoint returns empty or errors.
+    """
+
+    _attr_translation_key = "cpms"
+    _attr_name = "CPMS"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: RatioCoordinator,
+        client: RatioClient,
+        serial: str,
+    ) -> None:
+        super().__init__(coordinator, client, serial, "cpms")
+
+    def _available_options(self) -> list[CpmsConfig]:
+        if self.coordinator.data is None:
+            return []
+        opts = self.coordinator.data.cpms_options.get(self._serial)
+        if opts:
+            return opts
+        # Fallback: use the currently-configured CPMS as a single option.
+        settings = self.coordinator.data.ocpp_settings.get(self._serial)
+        if settings is not None and settings.cpms is not None:
+            return [settings.cpms]
+        return []
+
+    @property
+    def available(self) -> bool:
+        if not super().available or self.coordinator.data is None:
+            return False
+        settings = self.coordinator.data.ocpp_settings.get(self._serial)
+        if settings is None:
+            return False
+        return settings.cpms_status.is_change_allowed
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        if self.coordinator.data is None:
+            return None
+        settings = self.coordinator.data.ocpp_settings.get(self._serial)
+        if settings is None:
+            return None
+        reason = settings.cpms_status.change_not_allowed_reason
+        if reason is not None:
+            return {"change_not_allowed_reason": reason}
+        return None
+
+    def _option_label(self, opt: CpmsConfig) -> str:
+        """Return a unique human-readable label for a CPMS option."""
+        label = opt.central_system or opt.url or ""
+        # Disambiguate duplicate central_system names by appending the URL.
+        others = [o for o in self._available_options() if o is not opt]
+        if any((o.central_system or o.url or "") == label for o in others):
+            label = f"{label} ({opt.url})" if opt.url else label
+        return label
+
+    @property
+    def options(self) -> list[str]:
+        return [self._option_label(opt) for opt in self._available_options() if opt.central_system or opt.url]
+
+    @property
+    def current_option(self) -> str | None:
+        if self.coordinator.data is None:
+            return None
+        settings = self.coordinator.data.ocpp_settings.get(self._serial)
+        if settings is None or settings.cpms is None:
+            return None
+        configured_url = settings.cpms.url
+        for opt in self._available_options():
+            if opt.url == configured_url:
+                return self._option_label(opt)
+        return settings.cpms.central_system or settings.cpms.url
+
+    async def async_select_option(self, option: str) -> None:
+        for opt in self._available_options():
+            if self._option_label(opt) == option:
+                settings = None
+                if self.coordinator.data is not None:
+                    settings = self.coordinator.data.ocpp_settings.get(self._serial)
+                settings = settings or InstallerOcppSettings()
+                await self.coordinator.request_command(
+                    self._client.set_ocpp_settings,
+                    self._serial,
+                    dataclasses.replace(settings, cpms=opt),
+                )
+                return
+        _LOGGER.warning("cpms option %s did not match any known CPMS", option)

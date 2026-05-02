@@ -57,7 +57,21 @@
       "last_session_duration": { "name": "Last session duration" },
       "last_session_started_at": { "name": "Last session started" },
       "last_session_ended_at": { "name": "Last session ended" },
-      "last_session_vehicle": { "name": "Last session vehicle" }
+      "last_session_vehicle": { "name": "Last session vehicle" },
+      "cpc_serial_number": { "name": "CPC serial number" },
+      "hardware_type": { "name": "Hardware type" },
+      "hardware_version": { "name": "Hardware version" },
+      "firmware_version": { "name": "Firmware version" },
+      "connectivity_firmware_version": { "name": "Connectivity firmware version" },
+      "connectivity_hardware_version": { "name": "Connectivity hardware version" },
+      "wifi_ssid": { "name": "WiFi SSID" },
+      "wifi_rssi": { "name": "WiFi signal strength" },
+      "wifi_ip": { "name": "WiFi IP address" },
+      "ethernet_ip": { "name": "Ethernet IP address" },
+      "connection_medium": { "name": "Connection medium" },
+      "cpms_name": { "name": "CPMS name" },
+      "cpms_url": { "name": "CPMS URL" },
+      "charge_point_identifier": { "name": "Charge point identifier" }
     },
     "binary_sensor": {
       "vehicle_connected": { "name": "Vehicle connected" },
@@ -68,17 +82,27 @@
       "charging_authorized": { "name": "Charging authorized" },
       "power_reduced_by_dso": { "name": "Power reduced by DSO" },
       "firmware_update_available": { "name": "Firmware update available" },
-      "firmware_update_allowed": { "name": "Firmware update allowed" }
+      "firmware_update_allowed": { "name": "Firmware update allowed" },
+      "wifi_connected": { "name": "WiFi connected" },
+      "ethernet_connected": { "name": "Ethernet connected" },
+      "backend_connected": { "name": "Backend connected" },
+      "ocpp_connected": { "name": "OCPP connected" },
+      "time_synchronized": { "name": "Time synchronized" }
     },
     "button": {
       "grant_upgrade_permission": { "name": "Grant upgrade permission" }
     },
     "switch": {
-      "charging": { "name": "Charging" }
+      "charging": { "name": "Charging" },
+      "ocpp_enabled": { "name": "OCPP enabled" }
     },
     "select": {
       "charge_mode": { "name": "Charge mode" },
-      "active_vehicle": { "name": "Active vehicle" }
+      "active_vehicle": { "name": "Active vehicle" },
+      "cpms": { "name": "CPMS" }
+    },
+    "text": {
+      "charge_point_identifier": { "name": "Charge point identifier" }
     },
     "number": {
       "sun_on_delay_minutes": { "name": "Sun on delay" },

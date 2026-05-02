@@ -16,7 +16,8 @@ from aioratio.exceptions import (
     RatioConnectionError,
     RatioRateLimitError,
 )
-from aioratio.models import ChargerOverview, SolarSettings, UserSettings, Vehicle
+from aioratio.models import ChargerOverview, CpmsConfig, InstallerOcppSettings, SolarSettings, UserSettings, Vehicle
+from aioratio.models.diagnostics import ChargerDiagnostics
 from aioratio.models.history import Session
 
 from homeassistant.config_entries import ConfigEntry
@@ -45,6 +46,9 @@ class RatioData:
     user_settings: dict[str, UserSettings] = field(default_factory=dict)
     solar_settings: dict[str, SolarSettings] = field(default_factory=dict)
     vehicles: list[Vehicle] = field(default_factory=list)
+    diagnostics: dict[str, ChargerDiagnostics] = field(default_factory=dict)
+    ocpp_settings: dict[str, InstallerOcppSettings] = field(default_factory=dict)
+    cpms_options: dict[str, list[CpmsConfig]] = field(default_factory=dict)
 
 
 class RatioCoordinator(DataUpdateCoordinator[RatioData]):
@@ -68,6 +72,8 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         # Per-charger HA-side preferred vehicle for the next start_charge call.
         # Persisted via HA Store; loaded in async_load_preferences().
         self.preferred_vehicle: dict[str, str] = {}
+        # Track last CPMS fetch time; refresh at most every 10 minutes.
+        self._cpms_last_fetch: _datetime_type | None = None
         self._prefs_store: Store[dict[str, Any]] = Store(
             hass,
             STORAGE_VERSION,
@@ -136,11 +142,59 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
                 _LOGGER.debug("vehicles() failed: %s", err)
                 return None
 
+        async def _diagnostics(serial: str) -> tuple[str, ChargerDiagnostics | None]:
+            try:
+                return serial, await self.client.diagnostics(serial)
+            except RatioRateLimitError:
+                raise
+            except (RatioConnectionError, RatioApiError) as err:
+                _LOGGER.debug("diagnostics(%s) failed: %s", serial, err)
+                return serial, None
+
+        async def _ocpp_settings(serial: str) -> tuple[str, InstallerOcppSettings | None]:
+            try:
+                return serial, await self.client.ocpp_settings(serial)
+            except RatioRateLimitError:
+                raise
+            except (RatioConnectionError, RatioApiError) as err:
+                _LOGGER.debug("ocpp_settings(%s) failed: %s", serial, err)
+                return serial, None
+
+        async def _cpms_options(serial: str) -> tuple[str, list[CpmsConfig] | None]:
+            try:
+                return serial, await self.client.cpms_options(serial)
+            except RatioRateLimitError:
+                raise
+            except (RatioConnectionError, RatioApiError) as err:
+                _LOGGER.debug("cpms_options(%s) failed: %s", serial, err)
+                return serial, None
+
+        # Refresh CPMS at most every 10 minutes regardless of how many
+        # coordinator updates occur (command-triggered refreshes advance
+        # the old tick counter too quickly).
+        now = dt_util.utcnow()
+        fetch_cpms = (
+            self._cpms_last_fetch is None
+            or (now - self._cpms_last_fetch) >= timedelta(minutes=10)
+        )
+        if fetch_cpms:
+            self._cpms_last_fetch = now
+
         try:
-            settings_results, solar_results, vehicles_result = await asyncio.gather(
+            (
+                settings_results,
+                solar_results,
+                vehicles_result,
+                diagnostics_results,
+                ocpp_results,
+                cpms_results,
+            ) = await asyncio.gather(
                 asyncio.gather(*(_settings(s) for s in chargers)),
                 asyncio.gather(*(_solar(s) for s in chargers)),
                 _vehicles(),
+                asyncio.gather(*(_diagnostics(s) for s in chargers)),
+                asyncio.gather(*(_ocpp_settings(s) for s in chargers)),
+                asyncio.gather(*(_cpms_options(s) for s in chargers)) if fetch_cpms else asyncio.gather(),
             )
         except RatioRateLimitError as err:
             raise UpdateFailed(f"rate limited; backing off: {err}") from err
@@ -165,11 +219,38 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
             else (prev.vehicles if prev is not None else [])
         )
 
+        diagnostics: dict[str, ChargerDiagnostics] = {}
+        for serial, diag in diagnostics_results:
+            if diag is not None:
+                diagnostics[serial] = diag
+            elif prev is not None and serial in prev.diagnostics:
+                diagnostics[serial] = prev.diagnostics[serial]
+
+        ocpp_settings_map: dict[str, InstallerOcppSettings] = {}
+        for serial, ocpp in ocpp_results:
+            if ocpp is not None:
+                ocpp_settings_map[serial] = ocpp
+            elif prev is not None and serial in prev.ocpp_settings:
+                ocpp_settings_map[serial] = prev.ocpp_settings[serial]
+
+        cpms_options_map: dict[str, list[CpmsConfig]] = {}
+        if fetch_cpms:
+            for serial, opts in cpms_results:
+                if opts is not None:
+                    cpms_options_map[serial] = opts
+                elif prev is not None and serial in prev.cpms_options:
+                    cpms_options_map[serial] = prev.cpms_options[serial]
+        elif prev is not None:
+            cpms_options_map = dict(prev.cpms_options)
+
         return RatioData(
             chargers=chargers,
             user_settings=user_settings,
             solar_settings=solar_settings,
             vehicles=vehicles,
+            diagnostics=diagnostics,
+            ocpp_settings=ocpp_settings_map,
+            cpms_options=cpms_options_map,
         )
 
     async def request_command(

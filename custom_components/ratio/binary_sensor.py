@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from aioratio.models import ChargerOverview
+from aioratio.models.diagnostics import ChargerDiagnostics
 
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
@@ -124,6 +125,56 @@ FIRMWARE_BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, .
 )
 
 
+@dataclass(frozen=True, kw_only=True)
+class RatioDiagnosticBinarySensorDescription(BinarySensorEntityDescription):
+    """Describes a Ratio diagnostic binary sensor backed by ChargerDiagnostics."""
+
+    value_fn: Callable[[ChargerDiagnostics], bool | None]
+
+
+DIAGNOSTIC_BINARY_SENSOR_DESCRIPTIONS: tuple[RatioDiagnosticBinarySensorDescription, ...] = (
+    RatioDiagnosticBinarySensorDescription(
+        key="wifi_connected",
+        translation_key="wifi_connected",
+        name="WiFi connected",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.network_status.wifi.connected if d.network_status and d.network_status.wifi else None,
+    ),
+    RatioDiagnosticBinarySensorDescription(
+        key="ethernet_connected",
+        translation_key="ethernet_connected",
+        name="Ethernet connected",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.network_status.ethernet.connected if d.network_status and d.network_status.ethernet else None,
+    ),
+    RatioDiagnosticBinarySensorDescription(
+        key="backend_connected",
+        translation_key="backend_connected",
+        name="Backend connected",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.backend_status.connected if d.backend_status else None,
+    ),
+    RatioDiagnosticBinarySensorDescription(
+        key="ocpp_connected",
+        translation_key="ocpp_connected",
+        name="OCPP connected",
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.ocpp_status.connected if d.ocpp_status else None,
+    ),
+    RatioDiagnosticBinarySensorDescription(
+        key="time_synchronized",
+        translation_key="time_synchronized",
+        name="Time synchronized",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: d.network_status.is_time_synchronized if d.network_status else None,
+    ),
+)
+
+
 def _build_binary_sensor_entities(
     coordinator: RatioCoordinator, serial: str
 ) -> list["RatioBinarySensor"]:
@@ -149,14 +200,54 @@ async def async_setup_entry(
         new = set(coordinator.data.chargers) - known
         if not new:
             return
-        entities: list[RatioBinarySensor] = []
+        entities: list[BinarySensorEntity] = []
         for serial in new:
             entities.extend(_build_binary_sensor_entities(coordinator, serial))
+            entities.extend(
+                RatioDiagnosticBinarySensor(coordinator, serial, desc)
+                for desc in DIAGNOSTIC_BINARY_SENSOR_DESCRIPTIONS
+            )
         known.update(new)
         async_add_entities(entities)
 
     _add_new()
     entry.async_on_unload(coordinator.async_add_listener(_add_new))
+
+
+class RatioDiagnosticBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity):
+    """A diagnostic binary sensor reading ChargerDiagnostics data."""
+
+    entity_description: RatioDiagnosticBinarySensorDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: RatioCoordinator,
+        serial: str,
+        description: RatioDiagnosticBinarySensorDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self._serial = serial
+        self.entity_description = description
+        self._attr_unique_id = f"{serial}_{description.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, serial)},
+            manufacturer="Ratio",
+            name=f"Ratio {serial}",
+            serial_number=serial,
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        if self.coordinator.data is None:
+            return None
+        diag = self.coordinator.data.diagnostics.get(self._serial)
+        if diag is None:
+            return None
+        try:
+            return self.entity_description.value_fn(diag)
+        except AttributeError:
+            return None
 
 
 class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity):

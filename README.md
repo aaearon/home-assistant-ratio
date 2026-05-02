@@ -13,7 +13,7 @@ This is an unofficial integration. Not affiliated with Ratio.
 
 ## Status
 
-Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/schedule number controls, session history statistics, and dynamic charger discovery have been smoke-tested against a real charger. See [Known limitations](#known-limitations) for the remaining caveats.
+Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/schedule number controls, session history statistics, and dynamic charger discovery have been smoke-tested against a real Ratio Solar charger. See [Known limitations](#known-limitations) for the remaining caveats.
 
 ## Install
 
@@ -29,7 +29,7 @@ Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/
 
 Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
 
-Home Assistant will install `aioratio==0.5.0` from PyPI automatically; no extra Python deps to manage.
+Home Assistant will install `aioratio==0.6.0` from PyPI automatically; no extra Python deps to manage.
 
 ## Removing the Integration
 
@@ -41,7 +41,7 @@ Token files (`.storage/ratio_<entry_id>.tokens`) and preference storage are clea
 
 ## Supported Devices
 
-- **Ratio 6** — the primary charger model tested with this integration
+- **Ratio Solar** — the primary charger model tested with this integration
 - Any Ratio charger connected to the Ratio cloud should work, as the integration uses the same cloud API as the official mobile app
 
 The integration discovers chargers automatically from your Ratio account. Each charger appears as a separate device in Home Assistant.
@@ -55,15 +55,26 @@ One device per charger, with the following entities:
 | sensor | `actual_charging_power` (W) | `charge_session_status.actual_charging_power` |
 | sensor | `cloud_connection_state` | `cloud_connection_state` |
 | sensor | `charging_state` | `charger_status.indicators.charging_state` |
-| sensor | `firmware_update_status` | `charger_firmware_status.firmware_update_status` |
+| sensor (diagnostic, disabled by default) | `firmware_update_status` | `charger_firmware_status.firmware_update_status` |
 | sensor | `last_session_energy`, `last_session_duration`, `last_session_started_at`, `last_session_ended_at`, `last_session_vehicle` | derived from most recent session in history |
 | binary_sensor | `vehicle_connected`, `charge_session_active`, `charging_paused`, `error`, `charging_disabled` (with `reason` attribute), `charging_authorized`, `power_reduced_by_dso` | derived from `charger_status.indicators` |
+| binary_sensor (diagnostic) | `firmware_update_available`, `firmware_update_allowed` | `charger_firmware_status` |
 | switch | `charging` | `start_charge` / `stop_charge`, gated on `is_charge_start_allowed` / `is_charge_stop_allowed` |
 | select | `charge_mode` | `user_settings.charging_mode` (PUT via `set_user_settings`) |
 | select | `active_vehicle` | HA-side preference passed to the next `start_charge`, persisted across restarts |
 | number | `sun_on_delay_minutes`, `sun_off_delay_minutes`, `pure_solar_starting_current`, `smart_solar_starting_current` | `solar_settings` (GET/PUT) |
 | number | `maximum_charging_current`, `minimum_charging_current` | `user_settings` (GET/PUT) |
 | button | `grant_upgrade_permission` | approves queued firmware update jobs |
+| sensor (diagnostic) | `cpc_serial_number`, `hardware_type`, `firmware_version` | `diagnostics` endpoint — product info |
+| sensor (diagnostic, disabled by default) | `hardware_version`, `connectivity_firmware_version`, `connectivity_hardware_version` | `diagnostics` endpoint — product info |
+| sensor (diagnostic) | `wifi_ssid`, `wifi_rssi` (dBm), `connection_medium` | `diagnostics` endpoint — network status |
+| sensor (diagnostic, disabled by default) | `wifi_ip`, `ethernet_ip` | `diagnostics` endpoint — network status |
+| sensor (diagnostic, disabled by default) | `cpms_name`, `cpms_url` | `diagnostics` endpoint — OCPP status |
+| sensor (diagnostic) | `charge_point_identifier` | `installerOcpp` settings |
+| binary_sensor (diagnostic) | `wifi_connected`, `ethernet_connected`, `backend_connected`, `ocpp_connected`, `time_synchronized` | `diagnostics` endpoint — connectivity |
+| switch (config) | `ocpp_enabled` | `installerOcpp` settings — `enabled` field |
+| select (config) | `cpms` | `installerOcpp` settings — CPMS selection from operator list |
+| text (config) | `charge_point_identifier` | `installerOcpp` settings — writable OCPP CPID |
 | — | `ratio:energy_<serial>` (external statistic) | long-term energy statistics imported from session history via `import_session_history` |
 
 Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle, regardless of how many chargers).
@@ -105,14 +116,17 @@ The integration exposes several number and select entities that let you configur
 |--------|------|-------------|
 | Charge mode | Select | Switching between `Smart`, `SmartSolar`, and `PureSolar` charging modes |
 | Active vehicle | Select | Which vehicle to associate with the next `start_charge` command (HA-side preference, persisted across restarts) |
+| CPMS | Select | CPMS (Central Point Management System) operator selection from the installer-provided list |
 | Sun on delay | Number | Minutes of sustained solar surplus before solar charging starts |
 | Sun off delay | Number | Minutes after solar surplus drops before solar charging stops |
 | Pure solar starting current | Number | Minimum current (A) to begin a pure-solar session |
 | Smart solar starting current | Number | Minimum current (A) to begin a smart-solar session |
 | Maximum charging current | Number | Upper current limit (A) for the charger |
 | Minimum charging current | Number | Lower current limit (A) for the charger |
+| OCPP enabled | Switch | Enable or disable OCPP on the charger (only available when change is permitted by the API) |
+| Charge point identifier | Text | Writable OCPP charge point ID; maximum length enforced by the API |
 
-Number entities write to the Ratio cloud API when changed and take effect on the next charging cycle.
+Number, select, switch, and text config entities write to the Ratio cloud API when changed.
 
 ## Data Update
 
@@ -120,7 +134,7 @@ The integration uses two polling coordinators:
 
 | Coordinator | Interval | What it fetches |
 |-------------|----------|-----------------|
-| Main | 60 seconds | Charger status, user settings, solar settings, vehicles |
+| Main | 60 seconds | Charger status, user settings, solar settings, vehicles, diagnostics, OCPP settings |
 | History | 300 seconds (5 min) | Completed charge sessions for long-term energy statistics |
 
 After any command (start/stop charge, change settings), the main coordinator triggers an immediate refresh so entity states update without waiting for the next poll cycle.
@@ -214,7 +228,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
 +--------------------|-----+
                      v
               +---------------+
-              |   aioratio    |   <-- pinned: aioratio==0.5.0
+              |   aioratio    |   <-- pinned: aioratio==0.6.0
               |  (PyPI lib)   |
               +-------|-------+
                       v
@@ -229,7 +243,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
               (atomic write, mode 0600)
 ```
 
-- One `DataUpdateCoordinator` per config entry (account). All entities for all chargers under that account share it. The coordinator calls `chargers_overview()` (a single aggregate cloud call) per poll and entities select their slice.
+- One `DataUpdateCoordinator` per config entry (account). All entities for all chargers under that account share it. Each poll calls `chargers_overview()` plus per-charger `user_settings`, `solar_settings`, `diagnostics`, and `ocpp_settings` in parallel; CPMS options are refreshed every 10th tick (~10 min). Entities select their slice from the aggregated `RatioData` snapshot.
 - Token storage uses `aioratio.JsonFileTokenStore` rooted at `hass.config.path(".storage/ratio_<entry_id>.tokens")`. The Cognito DeviceKey/DeviceGroupKey/DevicePassword are persisted alongside the access/refresh tokens so subsequent restarts use the DEVICE_SRP_AUTH fast-path without re-prompting.
 - On `RatioAuthError` during initial login or coordinator refresh, HA raises `ConfigEntryAuthFailed`, triggers reauth, and prompts for a new password. If setup fails after the client has connected, the client session is cleaned up before re-raising.
 
@@ -244,7 +258,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
 
 ## Diagnostics
 
-`Settings → Devices & Services → Ratio EV Charging → ⋮ → Download diagnostics`. The dump redacts: email, password, all tokens, device key/group/password, charger serial numbers, license plates.
+`Settings → Devices & Services → Ratio EV Charging → ⋮ → Download diagnostics`. The dump redacts: email, password, all tokens, device key/group/password, charger serial numbers, license plates, CPMS URLs, charge point identifiers, WiFi SSIDs, and IP addresses.
 
 ## Troubleshooting
 
@@ -310,7 +324,7 @@ Files of interest:
 - `custom_components/ratio/__init__.py` — entry setup/teardown, token store wiring, platform forwarding.
 - `custom_components/ratio/coordinator.py` — single `DataUpdateCoordinator` per account; classifies `RatioAuthError` → `ConfigEntryAuthFailed`.
 - `custom_components/ratio/config_flow.py` — user step + reauth.
-- `custom_components/ratio/sensor.py`, `binary_sensor.py`, `switch.py`, `select.py`, `number.py`, `button.py` — `CoordinatorEntity` subclasses keyed by serial.
+- `custom_components/ratio/sensor.py`, `binary_sensor.py`, `switch.py`, `select.py`, `number.py`, `button.py`, `text.py` — `CoordinatorEntity` subclasses keyed by serial.
 - `custom_components/ratio/statistics.py` — long-term energy statistics from session history.
 - `custom_components/ratio/diagnostics.py` — redaction set.
 

@@ -26,6 +26,21 @@
       },
       "firmware_update_allowed": {
         "default": "mdi:cellphone-arrow-down"
+      },
+      "wifi_connected": {
+        "default": "mdi:wifi"
+      },
+      "ethernet_connected": {
+        "default": "mdi:ethernet"
+      },
+      "backend_connected": {
+        "default": "mdi:cloud-check-outline"
+      },
+      "ocpp_connected": {
+        "default": "mdi:ev-plug-ccs2"
+      },
+      "time_synchronized": {
+        "default": "mdi:clock-check-outline"
       }
     },
     "select": {
@@ -34,6 +49,9 @@
       },
       "active_vehicle": {
         "default": "mdi:car-connected"
+      },
+      "cpms": {
+        "default": "mdi:server-network"
       }
     },
     "number": {
@@ -59,6 +77,16 @@
     "button": {
       "grant_upgrade_permission": {
         "default": "mdi:cellphone-arrow-down"
+      }
+    },
+    "switch": {
+      "ocpp_enabled": {
+        "default": "mdi:ev-plug-ccs2"
+      }
+    },
+    "text": {
+      "charge_point_identifier": {
+        "default": "mdi:identifier"
       }
     }
   }
