@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -389,10 +390,8 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                     parsed: list[Session] = []
                     for raw_s in raw_list:
                         if isinstance(raw_s, dict):
-                            try:
+                            with contextlib.suppress(Exception):
                                 parsed.append(Session.from_dict(raw_s))
-                            except Exception:  # noqa: BLE001
-                                pass
                     self._persisted_sessions[str(serial_key)] = parsed
         self._loaded = True
 
