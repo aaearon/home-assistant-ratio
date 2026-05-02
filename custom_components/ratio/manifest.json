@@ -8,6 +8,6 @@
   "integration_type": "hub",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/aaearon/home-assistant-ratio/issues",
-  "requirements": ["aioratio==0.6.0"],
-  "version": "0.6.0"
+  "requirements": ["aioratio==0.7.0"],
+  "version": "0.7.0"
 }
