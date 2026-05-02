@@ -1,6 +1,8 @@
 """Tests for the Ratio coordinator data shape."""
 from __future__ import annotations
 
+from datetime import timedelta
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -451,15 +453,18 @@ async def test_cpms_options_not_refetched_on_second_tick(hass: HomeAssistant) ->
 
 
 @pytest.mark.asyncio
-async def test_cpms_options_refetched_on_eleventh_tick(hass: HomeAssistant) -> None:
-    """CPMS options should be re-fetched after 10 ticks."""
+async def test_cpms_options_refetched_after_10_minutes(
+    hass: HomeAssistant, freezer: Any
+) -> None:
+    """CPMS options should be re-fetched once more than 10 minutes have elapsed."""
     client = _make_full_client()
     entry = _make_entry(hass)
     coord = RatioCoordinator(hass, client, entry)
-    await coord.async_config_entry_first_refresh()  # tick 1
+    await coord.async_config_entry_first_refresh()  # fetches CPMS
 
-    for _ in range(9):  # ticks 2-10
-        await coord.async_refresh()
+    await coord.async_refresh()  # immediately after — should NOT re-fetch
+    assert client.cpms_options.call_count == 1
 
-    await coord.async_refresh()  # tick 11 — should fetch again
+    freezer.tick(timedelta(minutes=11))
+    await coord.async_refresh()  # 11 min later — should re-fetch
     assert client.cpms_options.call_count == 2

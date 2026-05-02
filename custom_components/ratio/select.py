@@ -233,7 +233,7 @@ class RatioCpmsSelect(_RatioSelectBase):
 
     @property
     def available(self) -> bool:
-        if self.coordinator.data is None:
+        if not super().available or self.coordinator.data is None:
             return False
         settings = self.coordinator.data.ocpp_settings.get(self._serial)
         if settings is None:
@@ -252,9 +252,18 @@ class RatioCpmsSelect(_RatioSelectBase):
             return {"change_not_allowed_reason": reason}
         return None
 
+    def _option_label(self, opt: CpmsConfig) -> str:
+        """Return a unique human-readable label for a CPMS option."""
+        label = opt.central_system or opt.url or ""
+        # Disambiguate duplicate central_system names by appending the URL.
+        others = [o for o in self._available_options() if o is not opt]
+        if any((o.central_system or o.url or "") == label for o in others):
+            label = f"{label} ({opt.url})" if opt.url else label
+        return label
+
     @property
     def options(self) -> list[str]:
-        return [opt.central_system or opt.url or "" for opt in self._available_options() if opt.central_system or opt.url]
+        return [self._option_label(opt) for opt in self._available_options() if opt.central_system or opt.url]
 
     @property
     def current_option(self) -> str | None:
@@ -266,12 +275,12 @@ class RatioCpmsSelect(_RatioSelectBase):
         configured_url = settings.cpms.url
         for opt in self._available_options():
             if opt.url == configured_url:
-                return opt.central_system or opt.url
+                return self._option_label(opt)
         return settings.cpms.central_system or settings.cpms.url
 
     async def async_select_option(self, option: str) -> None:
         for opt in self._available_options():
-            if (opt.central_system or opt.url) == option:
+            if self._option_label(opt) == option:
                 settings = None
                 if self.coordinator.data is not None:
                     settings = self.coordinator.data.ocpp_settings.get(self._serial)

@@ -49,6 +49,9 @@
       },
       "active_vehicle": {
         "default": "mdi:car-connected"
+      },
+      "cpms": {
+        "default": "mdi:server-network"
       }
     },
     "number": {
@@ -79,11 +82,6 @@
     "switch": {
       "ocpp_enabled": {
         "default": "mdi:ev-plug-ccs2"
-      }
-    },
-    "select": {
-      "cpms": {
-        "default": "mdi:server-network"
       }
     },
     "text": {

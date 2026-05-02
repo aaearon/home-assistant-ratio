@@ -72,8 +72,8 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         # Per-charger HA-side preferred vehicle for the next start_charge call.
         # Persisted via HA Store; loaded in async_load_preferences().
         self.preferred_vehicle: dict[str, str] = {}
-        # Tick counter for slow-cadence CPMS refresh (every 10th tick ≈ 10 min).
-        self._cpms_tick: int = 0
+        # Track last CPMS fetch time; refresh at most every 10 minutes.
+        self._cpms_last_fetch: _datetime_type | None = None
         self._prefs_store: Store[dict[str, Any]] = Store(
             hass,
             STORAGE_VERSION,
@@ -169,9 +169,16 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
                 _LOGGER.debug("cpms_options(%s) failed: %s", serial, err)
                 return serial, None
 
-        # Refresh CPMS on every 10th tick (≈10 min at 60s interval).
-        self._cpms_tick += 1
-        fetch_cpms = self._cpms_tick % 10 == 1
+        # Refresh CPMS at most every 10 minutes regardless of how many
+        # coordinator updates occur (command-triggered refreshes advance
+        # the old tick counter too quickly).
+        now = dt_util.utcnow()
+        fetch_cpms = (
+            self._cpms_last_fetch is None
+            or (now - self._cpms_last_fetch) >= timedelta(minutes=10)
+        )
+        if fetch_cpms:
+            self._cpms_last_fetch = now
 
         try:
             (

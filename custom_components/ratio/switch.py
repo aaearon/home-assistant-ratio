@@ -168,6 +168,8 @@ class RatioOcppEnabledSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
 
     @property
     def available(self) -> bool:
+        if not super().available or self.coordinator.data is None:
+            return False
         settings = self._ocpp_settings()
         if settings is None:
             return False
