@@ -13,7 +13,7 @@ This is an unofficial integration. Not affiliated with Ratio.
 
 ## Status
 
-Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/schedule number controls, session history statistics, and dynamic charger discovery have been smoke-tested against a real charger. See [Known limitations](#known-limitations) for the remaining caveats.
+Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/schedule number controls, session history statistics, and dynamic charger discovery have been smoke-tested against a real Ratio Solar charger. See [Known limitations](#known-limitations) for the remaining caveats.
 
 ## Install
 
@@ -29,7 +29,7 @@ Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/
 
 Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
 
-Home Assistant will install `aioratio==0.5.0` from PyPI automatically; no extra Python deps to manage.
+Home Assistant will install `aioratio==0.6.0` from PyPI automatically; no extra Python deps to manage.
 
 ## Removing the Integration
 
@@ -64,6 +64,13 @@ One device per charger, with the following entities:
 | number | `sun_on_delay_minutes`, `sun_off_delay_minutes`, `pure_solar_starting_current`, `smart_solar_starting_current` | `solar_settings` (GET/PUT) |
 | number | `maximum_charging_current`, `minimum_charging_current` | `user_settings` (GET/PUT) |
 | button | `grant_upgrade_permission` | approves queued firmware update jobs |
+| sensor (diagnostic) | `cpc_serial_number`, `hardware_type`, `firmware_version` | `diagnostics` endpoint — product info |
+| sensor (diagnostic) | `wifi_ssid`, `wifi_rssi` (dBm), `connection_medium` | `diagnostics` endpoint — network status |
+| sensor (diagnostic) | `charge_point_identifier` | `installerOcpp` settings |
+| binary_sensor (diagnostic) | `wifi_connected`, `ethernet_connected`, `backend_connected`, `ocpp_connected`, `time_synchronized` | `diagnostics` endpoint — connectivity |
+| switch (config) | `ocpp_enabled` | `installerOcpp` settings — `enabled` field |
+| select (config) | `cpms` | `installerOcpp` settings — CPMS selection from operator list |
+| text (config) | `charge_point_identifier` | `installerOcpp` settings — writable OCPP CPID |
 | — | `ratio:energy_<serial>` (external statistic) | long-term energy statistics imported from session history via `import_session_history` |
 
 Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle, regardless of how many chargers).
@@ -120,7 +127,7 @@ The integration uses two polling coordinators:
 
 | Coordinator | Interval | What it fetches |
 |-------------|----------|-----------------|
-| Main | 60 seconds | Charger status, user settings, solar settings, vehicles |
+| Main | 60 seconds | Charger status, user settings, solar settings, vehicles, diagnostics, OCPP settings |
 | History | 300 seconds (5 min) | Completed charge sessions for long-term energy statistics |
 
 After any command (start/stop charge, change settings), the main coordinator triggers an immediate refresh so entity states update without waiting for the next poll cycle.
@@ -244,7 +251,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
 
 ## Diagnostics
 
-`Settings → Devices & Services → Ratio EV Charging → ⋮ → Download diagnostics`. The dump redacts: email, password, all tokens, device key/group/password, charger serial numbers, license plates.
+`Settings → Devices & Services → Ratio EV Charging → ⋮ → Download diagnostics`. The dump redacts: email, password, all tokens, device key/group/password, charger serial numbers, license plates, CPMS URLs, charge point identifiers, WiFi SSIDs, and IP addresses.
 
 ## Troubleshooting
 
