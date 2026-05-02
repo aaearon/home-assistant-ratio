@@ -1,4 +1,5 @@
 """Tests for last-session sensors (C1)."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -26,11 +27,15 @@ def _session(
         total_charging_energy=energy,
         begin=TimeData(time=begin) if begin else None,
         end=TimeData(time=end) if end else None,
-        vehicle=Vehicle(vehicle_id="v1", vehicle_name=vehicle_name) if vehicle_name else None,
+        vehicle=Vehicle(vehicle_id="v1", vehicle_name=vehicle_name)
+        if vehicle_name
+        else None,
     )
 
 
-def _make_history_coordinator(sessions_by_serial: dict[str, list[Session]]) -> MagicMock:
+def _make_history_coordinator(
+    sessions_by_serial: dict[str, list[Session]],
+) -> MagicMock:
     coord = MagicMock()
     coord.data = sessions_by_serial
     coord.last_update_success = True
@@ -39,7 +44,8 @@ def _make_history_coordinator(sessions_by_serial: dict[str, list[Session]]) -> M
 
 def _by_key(serial: str, history) -> dict[str, RatioLastSessionSensor]:
     return {
-        d.key: RatioLastSessionSensor(history, serial, d) for d in LAST_SESSION_DESCRIPTIONS
+        d.key: RatioLastSessionSensor(history, serial, d)
+        for d in LAST_SESSION_DESCRIPTIONS
     }
 
 
@@ -52,8 +58,13 @@ def test_last_session_values_picked_from_most_recent_session() -> None:
 
     assert entities["last_session_energy"].native_value == 9000
     assert entities["last_session_duration"].native_value == 10_000
-    assert int(entities["last_session_started_at"].native_value.timestamp()) == 1_700_010_000
-    assert int(entities["last_session_ended_at"].native_value.timestamp()) == 1_700_020_000
+    assert (
+        int(entities["last_session_started_at"].native_value.timestamp())
+        == 1_700_010_000
+    )
+    assert (
+        int(entities["last_session_ended_at"].native_value.timestamp()) == 1_700_020_000
+    )
     assert entities["last_session_vehicle"].native_value == "My EV"
 
 

@@ -1,7 +1,7 @@
 """Tests for Ratio number entities."""
+
 from __future__ import annotations
 
-from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,7 +9,6 @@ from aioratio.models import SolarSettings, UserSettings
 from aioratio.models.settings import UpperLowerLimitSetting
 
 from custom_components.ratio.coordinator import RatioData
-
 from custom_components.ratio.number import (
     RatioMaximumChargingCurrentNumber,
     RatioMinimumChargingCurrentNumber,
@@ -19,7 +18,6 @@ from custom_components.ratio.number import (
     RatioSunOnDelayMinutesNumber,
 )
 
-
 SERIAL = "SN001"
 
 
@@ -27,15 +25,23 @@ def _solar() -> SolarSettings:
     return SolarSettings(
         sun_on_delay_minutes=UpperLowerLimitSetting(value=2.0, lower=0.0, upper=10.0),
         sun_off_delay_minutes=UpperLowerLimitSetting(value=3.0, lower=0.0, upper=15.0),
-        pure_solar_starting_current=UpperLowerLimitSetting(value=6.0, lower=6.0, upper=16.0),
-        smart_solar_starting_current=UpperLowerLimitSetting(value=8.0, lower=6.0, upper=16.0),
+        pure_solar_starting_current=UpperLowerLimitSetting(
+            value=6.0, lower=6.0, upper=16.0
+        ),
+        smart_solar_starting_current=UpperLowerLimitSetting(
+            value=8.0, lower=6.0, upper=16.0
+        ),
     )
 
 
 def _user() -> UserSettings:
     return UserSettings(
-        maximum_charging_current=UpperLowerLimitSetting(value=16.0, lower=6.0, upper=32.0),
-        minimum_charging_current=UpperLowerLimitSetting(value=6.0, lower=6.0, upper=16.0),
+        maximum_charging_current=UpperLowerLimitSetting(
+            value=16.0, lower=6.0, upper=32.0
+        ),
+        minimum_charging_current=UpperLowerLimitSetting(
+            value=6.0, lower=6.0, upper=16.0
+        ),
     )
 
 
@@ -58,6 +64,7 @@ def _make_coordinator(
 
 
 # ---- Reads ----
+
 
 @pytest.mark.parametrize(
     "cls,expected",
@@ -122,6 +129,7 @@ def test_unavailable_when_no_settings_for_serial() -> None:
 
 # ---- Writes ----
 
+
 @pytest.mark.asyncio
 async def test_set_solar_field_preserves_other_fields() -> None:
     solar = _solar()
@@ -146,7 +154,9 @@ async def test_set_solar_field_preserves_other_fields() -> None:
     # Other fields preserved
     assert new_settings.sun_off_delay_minutes == solar.sun_off_delay_minutes
     assert new_settings.pure_solar_starting_current == solar.pure_solar_starting_current
-    assert new_settings.smart_solar_starting_current == solar.smart_solar_starting_current
+    assert (
+        new_settings.smart_solar_starting_current == solar.smart_solar_starting_current
+    )
     client.set_user_settings.assert_not_called()
 
 

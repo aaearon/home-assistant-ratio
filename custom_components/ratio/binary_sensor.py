@@ -1,21 +1,21 @@
 """Binary sensor platform for Ratio EV Charging."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from aioratio.models import ChargerOverview
 from aioratio.models.diagnostics import ChargerDiagnostics
-
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
     BinarySensorEntityDescription,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -48,35 +48,33 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, ...] = (
         translation_key="vehicle_connected",
         name="Vehicle connected",
         device_class=BinarySensorDeviceClass.PLUG,
-        value_fn=lambda ov: (_ind(ov).is_vehicle_connected if _ind(ov) else None),
+        value_fn=lambda ov: _ind(ov).is_vehicle_connected if _ind(ov) else None,
     ),
     RatioBinarySensorEntityDescription(
         key="charge_session_active",
         translation_key="charge_session_active",
         name="Charging",
         device_class=BinarySensorDeviceClass.RUNNING,
-        value_fn=lambda ov: (_ind(ov).is_charge_session_active if _ind(ov) else None),
+        value_fn=lambda ov: _ind(ov).is_charge_session_active if _ind(ov) else None,
     ),
     RatioBinarySensorEntityDescription(
         key="charging_paused",
         translation_key="charging_paused",
         name="Charging paused",
-        value_fn=lambda ov: (_ind(ov).is_charging_paused if _ind(ov) else None),
+        value_fn=lambda ov: _ind(ov).is_charging_paused if _ind(ov) else None,
     ),
     RatioBinarySensorEntityDescription(
         key="error",
         translation_key="error",
         name="Error",
         device_class=BinarySensorDeviceClass.PROBLEM,
-        value_fn=lambda ov: (
-            bool(_ind(ov).errors) if _ind(ov) is not None else None
-        ),
+        value_fn=lambda ov: bool(_ind(ov).errors) if _ind(ov) is not None else None,
     ),
     RatioBinarySensorEntityDescription(
         key="charging_disabled",
         translation_key="charging_disabled",
         name="Charging disabled",
-        value_fn=lambda ov: (_ind(ov).is_charging_disabled if _ind(ov) else None),
+        value_fn=lambda ov: _ind(ov).is_charging_disabled if _ind(ov) else None,
         attrs_fn=lambda ov: (
             {"reason": _ind(ov).is_charging_disabled_reason}
             if _ind(ov) is not None and _ind(ov).is_charging_disabled_reason is not None
@@ -87,13 +85,13 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, ...] = (
         key="charging_authorized",
         translation_key="charging_authorized",
         name="Charging authorized",
-        value_fn=lambda ov: (_ind(ov).is_charging_authorized if _ind(ov) else None),
+        value_fn=lambda ov: _ind(ov).is_charging_authorized if _ind(ov) else None,
     ),
     RatioBinarySensorEntityDescription(
         key="power_reduced_by_dso",
         translation_key="power_reduced_by_dso",
         name="Power reduced by DSO",
-        value_fn=lambda ov: (_ind(ov).is_power_reduced_by_dso if _ind(ov) else None),
+        value_fn=lambda ov: _ind(ov).is_power_reduced_by_dso if _ind(ov) else None,
     ),
 )
 
@@ -132,14 +130,20 @@ class RatioDiagnosticBinarySensorDescription(BinarySensorEntityDescription):
     value_fn: Callable[[ChargerDiagnostics], bool | None]
 
 
-DIAGNOSTIC_BINARY_SENSOR_DESCRIPTIONS: tuple[RatioDiagnosticBinarySensorDescription, ...] = (
+DIAGNOSTIC_BINARY_SENSOR_DESCRIPTIONS: tuple[
+    RatioDiagnosticBinarySensorDescription, ...
+] = (
     RatioDiagnosticBinarySensorDescription(
         key="wifi_connected",
         translation_key="wifi_connected",
         name="WiFi connected",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda d: d.network_status.wifi.connected if d.network_status and d.network_status.wifi else None,
+        value_fn=lambda d: (
+            d.network_status.wifi.connected
+            if d.network_status and d.network_status.wifi
+            else None
+        ),
     ),
     RatioDiagnosticBinarySensorDescription(
         key="ethernet_connected",
@@ -147,7 +151,11 @@ DIAGNOSTIC_BINARY_SENSOR_DESCRIPTIONS: tuple[RatioDiagnosticBinarySensorDescript
         name="Ethernet connected",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda d: d.network_status.ethernet.connected if d.network_status and d.network_status.ethernet else None,
+        value_fn=lambda d: (
+            d.network_status.ethernet.connected
+            if d.network_status and d.network_status.ethernet
+            else None
+        ),
     ),
     RatioDiagnosticBinarySensorDescription(
         key="backend_connected",
@@ -170,14 +178,16 @@ DIAGNOSTIC_BINARY_SENSOR_DESCRIPTIONS: tuple[RatioDiagnosticBinarySensorDescript
         translation_key="time_synchronized",
         name="Time synchronized",
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda d: d.network_status.is_time_synchronized if d.network_status else None,
+        value_fn=lambda d: (
+            d.network_status.is_time_synchronized if d.network_status else None
+        ),
     ),
 )
 
 
 def _build_binary_sensor_entities(
     coordinator: RatioCoordinator, serial: str
-) -> list["RatioBinarySensor"]:
+) -> list[RatioBinarySensor]:
     return [
         RatioBinarySensor(coordinator, serial, desc)
         for desc in (*BINARY_SENSOR_DESCRIPTIONS, *FIRMWARE_BINARY_SENSOR_DESCRIPTIONS)
@@ -214,7 +224,9 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
-class RatioDiagnosticBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity):
+class RatioDiagnosticBinarySensor(
+    CoordinatorEntity[RatioCoordinator], BinarySensorEntity
+):
     """A diagnostic binary sensor reading ChargerDiagnostics data."""
 
     entity_description: RatioDiagnosticBinarySensorDescription

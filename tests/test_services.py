@@ -1,29 +1,26 @@
 """Tests for Ratio service helpers."""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import voluptuous as vol
 from aioratio.models import Vehicle
 from aioratio.models.history import Session, SessionHistoryPage, TimeData
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
-
-from homeassistant.config_entries import ConfigEntryState
-
 from custom_components.ratio.const import (
-    ATTR_SLOTS,
     DOMAIN,
     SERVICE_ADD_VEHICLE,
     SERVICE_IMPORT_SESSION_HISTORY,
     SERVICE_REMOVE_VEHICLE,
 )
-from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-
 from custom_components.ratio.services import (
     SET_SCHEDULE_SCHEMA,
     _resolve_serials,
@@ -50,9 +47,7 @@ async def test_resolve_serials_picks_active_entry(
     stale_entry = _make_entry(hass, entry_id="entry_stale")
 
     # Only active_entry is in LOADED state
-    active_entry._async_set_state(
-        hass, ConfigEntryState.LOADED, None
-    )
+    active_entry._async_set_state(hass, ConfigEntryState.LOADED, None)
 
     device = device_registry.async_get_or_create(
         config_entry_id=stale_entry.entry_id,
@@ -120,7 +115,6 @@ async def test_add_vehicle_returns_vehicle_id_in_response(
     mock_ratio_client: MagicMock,
 ) -> None:
     """ratio.add_vehicle should call client.add_vehicle and return the new id."""
-    entry = setup_integration
     client = mock_ratio_client.return_value
     new_vehicle = Vehicle(vehicle_id="v-new", vehicle_name="Tesla")
     client.add_vehicle = AsyncMock(return_value=new_vehicle)
@@ -175,8 +169,8 @@ async def test_import_session_history_imports_for_window(
     entry = setup_integration
     history = entry.runtime_data.history_coordinator
 
-    begin_dt = datetime(2023, 11, 1, tzinfo=timezone.utc)
-    end_dt = datetime(2023, 12, 1, tzinfo=timezone.utc)
+    begin_dt = datetime(2023, 11, 1, tzinfo=UTC)
+    end_dt = datetime(2023, 12, 1, tzinfo=UTC)
 
     mock_import_window = AsyncMock(return_value={"SN-IMP": 2})
     with patch.object(history, "async_import_window", new=mock_import_window):
@@ -223,15 +217,17 @@ async def test_history_coordinator_async_import_window(
 
     from custom_components.ratio.coordinator import RatioData
 
-    coordinator.async_set_updated_data(RatioData(
-        chargers={serial: ChargerOverview.from_dict({"serialNumber": serial})}
-    ))
+    coordinator.async_set_updated_data(
+        RatioData(
+            chargers={serial: ChargerOverview.from_dict({"serialNumber": serial})}
+        )
+    )
 
     async def _fake(hass, ser, sessions, starting_total):
         return float(starting_total) + sum(s.total_charging_energy for s in sessions)
 
-    begin = datetime(2023, 11, 1, tzinfo=timezone.utc)
-    end = datetime(2023, 12, 1, tzinfo=timezone.utc)
+    begin = datetime(2023, 11, 1, tzinfo=UTC)
+    end = datetime(2023, 12, 1, tzinfo=UTC)
 
     with patch(
         "custom_components.ratio.coordinator.async_import_sessions",
@@ -404,9 +400,7 @@ async def test_add_vehicle_rate_limit_error(
     from aioratio.exceptions import RatioRateLimitError
 
     client = mock_ratio_client.return_value
-    client.add_vehicle = AsyncMock(
-        side_effect=RatioRateLimitError("too fast")
-    )
+    client.add_vehicle = AsyncMock(side_effect=RatioRateLimitError("too fast"))
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
@@ -428,9 +422,7 @@ async def test_add_vehicle_connection_error(
     from aioratio.exceptions import RatioConnectionError
 
     client = mock_ratio_client.return_value
-    client.add_vehicle = AsyncMock(
-        side_effect=RatioConnectionError("timeout")
-    )
+    client.add_vehicle = AsyncMock(side_effect=RatioConnectionError("timeout"))
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
@@ -452,9 +444,7 @@ async def test_add_vehicle_api_error(
     from aioratio.exceptions import RatioApiError
 
     client = mock_ratio_client.return_value
-    client.add_vehicle = AsyncMock(
-        side_effect=RatioApiError("server error")
-    )
+    client.add_vehicle = AsyncMock(side_effect=RatioApiError("server error"))
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
@@ -476,9 +466,7 @@ async def test_remove_vehicle_rate_limit_error(
     from aioratio.exceptions import RatioRateLimitError
 
     client = mock_ratio_client.return_value
-    client.remove_vehicle = AsyncMock(
-        side_effect=RatioRateLimitError("too fast")
-    )
+    client.remove_vehicle = AsyncMock(side_effect=RatioRateLimitError("too fast"))
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
@@ -499,9 +487,7 @@ async def test_remove_vehicle_connection_error(
     from aioratio.exceptions import RatioConnectionError
 
     client = mock_ratio_client.return_value
-    client.remove_vehicle = AsyncMock(
-        side_effect=RatioConnectionError("timeout")
-    )
+    client.remove_vehicle = AsyncMock(side_effect=RatioConnectionError("timeout"))
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(
@@ -522,9 +508,7 @@ async def test_remove_vehicle_api_error(
     from aioratio.exceptions import RatioApiError
 
     client = mock_ratio_client.return_value
-    client.remove_vehicle = AsyncMock(
-        side_effect=RatioApiError("server error")
-    )
+    client.remove_vehicle = AsyncMock(side_effect=RatioApiError("server error"))
 
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(

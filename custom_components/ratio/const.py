@@ -1,4 +1,5 @@
 """Constants for the Ratio EV Charging integration."""
+
 from __future__ import annotations
 
 DOMAIN = "ratio"
@@ -22,7 +23,15 @@ ATTR_BEGIN_TIME = "begin_time"
 ATTR_END_TIME = "end_time"
 ATTR_SLOTS = "slots"
 
-PLATFORMS: list[str] = ["sensor", "binary_sensor", "button", "switch", "select", "number", "text"]
+PLATFORMS: list[str] = [
+    "sensor",
+    "binary_sensor",
+    "button",
+    "switch",
+    "select",
+    "number",
+    "text",
+]
 
 # Persistent storage for coordinator-level user preferences (preferred vehicle).
 STORAGE_VERSION = 1

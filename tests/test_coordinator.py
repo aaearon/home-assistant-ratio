@@ -1,4 +1,5 @@
 """Tests for the Ratio coordinator data shape."""
+
 from __future__ import annotations
 
 from datetime import timedelta
@@ -6,8 +7,21 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aioratio.models import ChargerOverview, CpmsConfig, InstallerOcppSettings, SolarSettings, UserSettings, Vehicle
-from aioratio.models.diagnostics import ChargerDiagnostics, BackendStatus
+from aioratio.models import (
+    ChargerOverview,
+    CpmsConfig,
+    InstallerOcppSettings,
+    SolarSettings,
+    UserSettings,
+    Vehicle,
+)
+from aioratio.models.diagnostics import BackendStatus, ChargerDiagnostics
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.ratio.const import DOMAIN
+from custom_components.ratio.coordinator import RatioCoordinator, RatioData
 
 
 def _stub_new_methods(client: MagicMock) -> None:
@@ -15,13 +29,6 @@ def _stub_new_methods(client: MagicMock) -> None:
     client.diagnostics = AsyncMock(return_value=ChargerDiagnostics())
     client.ocpp_settings = AsyncMock(return_value=InstallerOcppSettings())
     client.cpms_options = AsyncMock(return_value=[])
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
-from homeassistant.config_entries import ConfigEntryState
-from homeassistant.core import HomeAssistant
-
-from custom_components.ratio.const import DOMAIN
-from custom_components.ratio.coordinator import RatioCoordinator, RatioData
 
 
 def _overview(serial: str) -> ChargerOverview:
@@ -145,9 +152,7 @@ async def test_update_raises_config_entry_auth_failed_on_auth_error(
 
     client = MagicMock()
     _stub_new_methods(client)
-    client.chargers_overview = AsyncMock(
-        side_effect=RatioAuthError("expired token")
-    )
+    client.chargers_overview = AsyncMock(side_effect=RatioAuthError("expired token"))
     entry = _make_entry(hass)
     coord = RatioCoordinator(hass, client, entry)
 
@@ -165,9 +170,7 @@ async def test_update_raises_update_failed_on_connection_error(
 
     client = MagicMock()
     _stub_new_methods(client)
-    client.chargers_overview = AsyncMock(
-        side_effect=RatioConnectionError("timeout")
-    )
+    client.chargers_overview = AsyncMock(side_effect=RatioConnectionError("timeout"))
     entry = _make_entry(hass)
     coord = RatioCoordinator(hass, client, entry)
 
@@ -185,9 +188,7 @@ async def test_update_raises_update_failed_on_rate_limit(
 
     client = MagicMock()
     _stub_new_methods(client)
-    client.chargers_overview = AsyncMock(
-        side_effect=RatioRateLimitError("429")
-    )
+    client.chargers_overview = AsyncMock(side_effect=RatioRateLimitError("429"))
     entry = _make_entry(hass)
     coord = RatioCoordinator(hass, client, entry)
 
@@ -205,9 +206,7 @@ async def test_update_raises_update_failed_on_api_error(
 
     client = MagicMock()
     _stub_new_methods(client)
-    client.chargers_overview = AsyncMock(
-        side_effect=RatioApiError("500")
-    )
+    client.chargers_overview = AsyncMock(side_effect=RatioApiError("500"))
     entry = _make_entry(hass)
     coord = RatioCoordinator(hass, client, entry)
 
@@ -330,9 +329,7 @@ async def test_update_rate_limit_in_parallel_settings(
     client = MagicMock()
     _stub_new_methods(client)
     client.chargers_overview = AsyncMock(return_value=[_overview("ABC123")])
-    client.user_settings = AsyncMock(
-        side_effect=RatioRateLimitError("429")
-    )
+    client.user_settings = AsyncMock(side_effect=RatioRateLimitError("429"))
     client.solar_settings = AsyncMock(return_value=None)
     client.vehicles = AsyncMock(return_value=[])
 

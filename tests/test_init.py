@@ -1,14 +1,14 @@
 """Tests for Ratio integration setup lifecycle."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioratio.exceptions import RatioAuthError
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ratio.const import DOMAIN
 
@@ -23,7 +23,8 @@ def _make_config_entry(hass: HomeAssistant) -> MockConfigEntry:
 
 
 def _make_client_mock(
-    *, aenter_side_effect: Exception | None = None,
+    *,
+    aenter_side_effect: Exception | None = None,
 ) -> MagicMock:
     """Build a mock RatioClient instance."""
     instance = MagicMock()
@@ -134,9 +135,10 @@ async def test_client_cleanup_on_coordinator_failure(
 @pytest.mark.asyncio
 async def test_stale_device_removal_allowed(hass: HomeAssistant) -> None:
     """async_remove_config_entry_device should allow removal of unknown serials."""
-    from custom_components.ratio import async_remove_config_entry_device
-    from custom_components.ratio.coordinator import RatioData, RatioCoordinator
     from homeassistant.helpers import device_registry as dr
+
+    from custom_components.ratio import async_remove_config_entry_device
+    from custom_components.ratio.coordinator import RatioCoordinator, RatioData
 
     entry = _make_config_entry(hass)
 

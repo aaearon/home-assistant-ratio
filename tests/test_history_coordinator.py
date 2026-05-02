@@ -1,4 +1,5 @@
 """Tests for RatioHistoryCoordinator (pagination, dedup, backfill, restart)."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,11 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aioratio.models import ChargerOverview
 from aioratio.models.history import Session, SessionHistoryPage, TimeData
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ratio.const import DOMAIN
 from custom_components.ratio.coordinator import (
@@ -31,9 +31,7 @@ def _session(sid: str, serial: str, begin_ts: int, energy: int = 1000) -> Sessio
     )
 
 
-def _make_entry(
-    hass: HomeAssistant, entry_id: str = "e1"
-) -> MockConfigEntry:
+def _make_entry(hass: HomeAssistant, entry_id: str = "e1") -> MockConfigEntry:
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={"email": "user@example.com", "password": "hunter2"},
@@ -45,9 +43,7 @@ def _make_entry(
 
 
 def _make_main_coordinator(serials: list[str]) -> MagicMock:
-    chargers = {
-        s: ChargerOverview.from_dict({"serialNumber": s}) for s in serials
-    }
+    chargers = {s: ChargerOverview.from_dict({"serialNumber": s}) for s in serials}
     main = MagicMock()
     main.data = RatioData(chargers=chargers)
     return main
@@ -70,9 +66,7 @@ def _patch_import() -> AsyncMock:
 
 
 @pytest.mark.asyncio
-async def test_first_run_backfill_uses_30_days(
-    hass: HomeAssistant, freezer
-) -> None:
+async def test_first_run_backfill_uses_30_days(hass: HomeAssistant, freezer) -> None:
     freezer.move_to("2024-06-15T12:00:00+00:00")
     frozen_ts = int(dt_util.utcnow().timestamp())
 
@@ -198,5 +192,7 @@ async def test_pagination_walks_next_tokens(hass: HomeAssistant) -> None:
         sessions = mock_import.await_args_list[0].args[2]
         assert [s.session_id for s in sessions] == ["a", "b", "c"]
 
-    tokens = [c.kwargs.get("next_token") for c in client.session_history.await_args_list]
+    tokens = [
+        c.kwargs.get("next_token") for c in client.session_history.await_args_list
+    ]
     assert tokens == [None, "t1", "t2"]

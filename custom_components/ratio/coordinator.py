@@ -1,12 +1,13 @@
 """DataUpdateCoordinator for the Ratio integration."""
+
 from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
-from datetime import timedelta
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import datetime as _datetime_type
+from datetime import timedelta
 from typing import Any
 
 from aioratio import RatioClient
@@ -16,10 +17,16 @@ from aioratio.exceptions import (
     RatioConnectionError,
     RatioRateLimitError,
 )
-from aioratio.models import ChargerOverview, CpmsConfig, InstallerOcppSettings, SolarSettings, UserSettings, Vehicle
+from aioratio.models import (
+    ChargerOverview,
+    CpmsConfig,
+    InstallerOcppSettings,
+    SolarSettings,
+    UserSettings,
+    Vehicle,
+)
 from aioratio.models.diagnostics import ChargerDiagnostics
 from aioratio.models.history import Session
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
@@ -151,7 +158,9 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
                 _LOGGER.debug("diagnostics(%s) failed: %s", serial, err)
                 return serial, None
 
-        async def _ocpp_settings(serial: str) -> tuple[str, InstallerOcppSettings | None]:
+        async def _ocpp_settings(
+            serial: str,
+        ) -> tuple[str, InstallerOcppSettings | None]:
             try:
                 return serial, await self.client.ocpp_settings(serial)
             except RatioRateLimitError:
@@ -173,10 +182,9 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         # coordinator updates occur (command-triggered refreshes advance
         # the old tick counter too quickly).
         now = dt_util.utcnow()
-        fetch_cpms = (
-            self._cpms_last_fetch is None
-            or (now - self._cpms_last_fetch) >= timedelta(minutes=10)
-        )
+        fetch_cpms = self._cpms_last_fetch is None or (
+            now - self._cpms_last_fetch
+        ) >= timedelta(minutes=10)
         if fetch_cpms:
             self._cpms_last_fetch = now
 
@@ -194,7 +202,9 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
                 _vehicles(),
                 asyncio.gather(*(_diagnostics(s) for s in chargers)),
                 asyncio.gather(*(_ocpp_settings(s) for s in chargers)),
-                asyncio.gather(*(_cpms_options(s) for s in chargers)) if fetch_cpms else asyncio.gather(),
+                asyncio.gather(*(_cpms_options(s) for s in chargers))
+                if fetch_cpms
+                else asyncio.gather(),
             )
         except RatioRateLimitError as err:
             raise UpdateFailed(f"rate limited; backing off: {err}") from err
@@ -348,7 +358,9 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
             lie = stored.get("last_imported_end_time")
             if isinstance(lie, dict):
                 self._last_imported_end_time = {
-                    str(k): int(v) for k, v in lie.items() if isinstance(v, (int, float))
+                    str(k): int(v)
+                    for k, v in lie.items()
+                    if isinstance(v, (int, float))
                 }
             seen = stored.get("seen_ids")
             if isinstance(seen, dict):
@@ -424,6 +436,7 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         for initial setup or gap-filling only; re-adding the integration resets
         the live baseline cleanly.
         """
+
         def _to_epoch(v: _datetime_type | int) -> int:
             if isinstance(v, _datetime_type):
                 return int(v.timestamp())

@@ -8,16 +8,16 @@ that hour.
 Uses ``async_add_external_statistics``; the recorder requires the source to
 match the statistic_id domain prefix (``ratio``).
 """
+
 from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
 from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from aioratio.models.history import Session
-
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
@@ -49,11 +49,11 @@ def statistic_id_for(serial: str) -> str:
 
 def _floor_hour(ts: int) -> datetime:
     """Floor a UTC epoch-seconds timestamp to the start of its hour."""
-    dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    dt = datetime.fromtimestamp(int(ts), tz=UTC)
     return dt.replace(minute=0, second=0, microsecond=0)
 
 
-def build_metadata(serial: str) -> "StatisticMetaData":
+def build_metadata(serial: str) -> StatisticMetaData:
     """Build the StatisticMetaData dict for one charger.
 
     StatisticMetaData is a TypedDict in the recorder package; constructing a
@@ -72,7 +72,7 @@ def build_metadata(serial: str) -> "StatisticMetaData":
 def build_statistics(
     sessions: Iterable[Session],
     starting_total: float,
-) -> tuple[list["StatisticData"], float]:
+) -> tuple[list[StatisticData], float]:
     """Build StatisticData entries for ``sessions``.
 
     Sessions must already be in chronological (ascending begin) order.

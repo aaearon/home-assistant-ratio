@@ -1,17 +1,14 @@
 """Tests for Ratio diagnostics."""
-from __future__ import annotations
 
-from unittest.mock import MagicMock
+from __future__ import annotations
 
 import pytest
 from aioratio.models import ChargerOverview, Vehicle
-from pytest_homeassistant_custom_component.common import MockConfigEntry
-
 from homeassistant.core import HomeAssistant
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ratio.coordinator import RatioData
 from custom_components.ratio.diagnostics import async_get_config_entry_diagnostics
-
 
 SERIAL = "SN001"
 
@@ -54,23 +51,25 @@ async def test_diagnostics_with_charger_data(
     entry = setup_integration
     coordinator = entry.runtime_data.coordinator
 
-    ov = ChargerOverview.from_dict({
-        "serialNumber": SERIAL,
-        "chargerStatus": {
-            "indicators": {
-                "isChargeSessionActive": False,
-                "isVehicleConnected": True,
-                "isChargingPaused": False,
-                "errors": [],
-                "isChargingDisabled": False,
-                "isChargingAuthorized": True,
-                "isPowerReducedByDso": False,
-                "chargingState": "idle",
+    ov = ChargerOverview.from_dict(
+        {
+            "serialNumber": SERIAL,
+            "chargerStatus": {
+                "indicators": {
+                    "isChargeSessionActive": False,
+                    "isVehicleConnected": True,
+                    "isChargingPaused": False,
+                    "errors": [],
+                    "isChargingDisabled": False,
+                    "isChargingAuthorized": True,
+                    "isPowerReducedByDso": False,
+                    "chargingState": "idle",
+                },
+                "isChargeStartAllowed": True,
+                "isChargeStopAllowed": False,
             },
-            "isChargeStartAllowed": True,
-            "isChargeStopAllowed": False,
-        },
-    })
+        }
+    )
     vehicles = [Vehicle(vehicle_id="v1", vehicle_name="Tesla")]
     coordinator.async_set_updated_data(
         RatioData(chargers={SERIAL: ov}, vehicles=vehicles)
@@ -119,8 +118,14 @@ async def test_diagnostics_includes_new_sections(
     coordinator.async_set_updated_data(
         RatioData(
             chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
-            diagnostics={SERIAL: ChargerDiagnostics(backend_status=BackendStatus(connected=True))},
-            ocpp_settings={SERIAL: InstallerOcppSettings(enabled=True, charge_point_identifier="CP-1")},
+            diagnostics={
+                SERIAL: ChargerDiagnostics(backend_status=BackendStatus(connected=True))
+            },
+            ocpp_settings={
+                SERIAL: InstallerOcppSettings(
+                    enabled=True, charge_point_identifier="CP-1"
+                )
+            },
             cpms_options={SERIAL: [CpmsConfig(central_system="Op", url="ws://op.com")]},
         )
     )
@@ -140,23 +145,38 @@ async def test_diagnostics_redacts_new_sensitive_fields(
 ) -> None:
     """New sensitive fields like cpms_url, ssid, address must be redacted."""
     from aioratio.models import CpmsConfig, InstallerOcppSettings
-    from aioratio.models.diagnostics import ChargerDiagnostics, NetworkStatus, WifiStatus, Ipv4
+    from aioratio.models.diagnostics import (
+        ChargerDiagnostics,
+        Ipv4,
+        NetworkStatus,
+        WifiStatus,
+    )
 
     entry = setup_integration
     coordinator = entry.runtime_data.coordinator
     coordinator.async_set_updated_data(
         RatioData(
             chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
-            diagnostics={SERIAL: ChargerDiagnostics(
-                network_status=NetworkStatus(
-                    wifi=WifiStatus(
-                        ssid="MyHomeNet",
-                        ipv4=Ipv4(address="192.168.1.50", netmask="255.255.255.0", gateway="192.168.1.1"),
+            diagnostics={
+                SERIAL: ChargerDiagnostics(
+                    network_status=NetworkStatus(
+                        wifi=WifiStatus(
+                            ssid="MyHomeNet",
+                            ipv4=Ipv4(
+                                address="192.168.1.50",
+                                netmask="255.255.255.0",
+                                gateway="192.168.1.1",
+                            ),
+                        ),
                     ),
-                ),
-            )},
-            ocpp_settings={SERIAL: InstallerOcppSettings(charge_point_identifier="CP-SECRET")},
-            cpms_options={SERIAL: [CpmsConfig(central_system="Op", url="ws://secret.com")]},
+                )
+            },
+            ocpp_settings={
+                SERIAL: InstallerOcppSettings(charge_point_identifier="CP-SECRET")
+            },
+            cpms_options={
+                SERIAL: [CpmsConfig(central_system="Op", url="ws://secret.com")]
+            },
         )
     )
     await hass.async_block_till_done()

@@ -1,4 +1,5 @@
 """Select platform for Ratio EV Charging."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -7,11 +8,10 @@ from typing import Any
 
 from aioratio import RatioClient
 from aioratio.models import CpmsConfig, InstallerOcppSettings
-
 from homeassistant.components.select import SelectEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -196,7 +196,9 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
                 await self.coordinator.async_save_preferences()
                 self.async_write_ha_state()
                 return
-        _LOGGER.warning("active_vehicle option %s did not match any known vehicle", option)
+        _LOGGER.warning(
+            "active_vehicle option %s did not match any known vehicle", option
+        )
 
 
 class RatioCpmsSelect(_RatioSelectBase):
@@ -263,7 +265,11 @@ class RatioCpmsSelect(_RatioSelectBase):
 
     @property
     def options(self) -> list[str]:
-        return [self._option_label(opt) for opt in self._available_options() if opt.central_system or opt.url]
+        return [
+            self._option_label(opt)
+            for opt in self._available_options()
+            if opt.central_system or opt.url
+        ]
 
     @property
     def current_option(self) -> str | None:

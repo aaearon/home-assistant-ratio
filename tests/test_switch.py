@@ -1,16 +1,15 @@
 """Tests for the Ratio charging switch."""
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from aioratio.models import ChargerOverview
-
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.ratio.coordinator import RatioData
-
 
 SERIAL = "SN001"
 

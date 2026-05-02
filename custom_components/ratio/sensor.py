@@ -1,24 +1,29 @@
 """Sensor platform for Ratio EV Charging."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from aioratio.models import ChargerOverview
 from aioratio.models.diagnostics import ChargerDiagnostics
 from aioratio.models.history import Session
-
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfEnergy, UnitOfPower, UnitOfTime, SIGNAL_STRENGTH_DECIBELS_MILLIWATT
+from homeassistant.const import (
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
+    UnitOfEnergy,
+    UnitOfPower,
+    UnitOfTime,
+)
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.const import EntityCategory
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -63,7 +68,8 @@ SENSOR_DESCRIPTIONS: tuple[RatioSensorEntityDescription, ...] = (
         name="Charging state",
         value_fn=lambda ov: (
             ov.charger_status.indicators.charging_state
-            if ov.charger_status is not None and ov.charger_status.indicators is not None
+            if ov.charger_status is not None
+            and ov.charger_status.indicators is not None
             else None
         ),
     ),
@@ -182,7 +188,11 @@ DIAGNOSTIC_SENSOR_DESCRIPTIONS: tuple[RatioDiagnosticSensorDescription, ...] = (
         name="WiFi IP address",
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        value_fn=lambda d: _ns(d).wifi.ipv4.address if _ns(d) and _ns(d).wifi and _ns(d).wifi.ipv4 else None,
+        value_fn=lambda d: (
+            _ns(d).wifi.ipv4.address
+            if _ns(d) and _ns(d).wifi and _ns(d).wifi.ipv4
+            else None
+        ),
     ),
     RatioDiagnosticSensorDescription(
         key="ethernet_ip",
@@ -190,7 +200,11 @@ DIAGNOSTIC_SENSOR_DESCRIPTIONS: tuple[RatioDiagnosticSensorDescription, ...] = (
         name="Ethernet IP address",
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
-        value_fn=lambda d: _ns(d).ethernet.ipv4.address if _ns(d) and _ns(d).ethernet and _ns(d).ethernet.ipv4 else None,
+        value_fn=lambda d: (
+            _ns(d).ethernet.ipv4.address
+            if _ns(d) and _ns(d).ethernet and _ns(d).ethernet.ipv4
+            else None
+        ),
     ),
     RatioDiagnosticSensorDescription(
         key="connection_medium",
@@ -257,7 +271,7 @@ def _last_session(history: RatioHistoryCoordinator, serial: str) -> Session | No
 def _ts(epoch: int | None) -> datetime | None:
     if epoch is None or epoch <= 0:
         return None
-    return datetime.fromtimestamp(int(epoch), tz=timezone.utc)
+    return datetime.fromtimestamp(int(epoch), tz=UTC)
 
 
 def _session_duration(s: Session) -> int | None:
@@ -304,7 +318,7 @@ LAST_SESSION_DESCRIPTIONS: tuple[RatioLastSessionSensorDescription, ...] = (
         key="last_session_vehicle",
         translation_key="last_session_vehicle",
         name="Last session vehicle",
-        value_fn=lambda s: (s.vehicle.vehicle_name if s.vehicle else None),
+        value_fn=lambda s: s.vehicle.vehicle_name if s.vehicle else None,
     ),
 )
 
@@ -472,9 +486,7 @@ class RatioOcppSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
             return None
 
 
-class RatioLastSessionSensor(
-    CoordinatorEntity[RatioHistoryCoordinator], SensorEntity
-):
+class RatioLastSessionSensor(CoordinatorEntity[RatioHistoryCoordinator], SensorEntity):
     """Sensor reading the most-recent completed session for a charger."""
 
     entity_description: RatioLastSessionSensorDescription

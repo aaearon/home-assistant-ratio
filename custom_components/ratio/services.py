@@ -1,4 +1,5 @@
 """Service handlers for the Ratio integration."""
+
 from __future__ import annotations
 
 import logging
@@ -12,7 +13,6 @@ from aioratio.exceptions import (
     RatioRateLimitError,
 )
 from aioratio.models import ChargeSchedule, ScheduleSlot, Vehicle
-
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -20,7 +20,8 @@ from homeassistant.core import (
     SupportsResponse,
 )
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
-from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import device_registry as dr
 
 from .const import (
     ATTR_BEGIN_TIME,
@@ -37,7 +38,7 @@ from .const import (
     SERVICE_START_CHARGE,
     SERVICE_STOP_CHARGE,
 )
-from .coordinator import RatioCoordinator, RatioHistoryCoordinator
+from .coordinator import RatioCoordinator
 
 if TYPE_CHECKING:
     from . import RatioRuntimeData
@@ -101,9 +102,7 @@ def _resolve_serials(hass: HomeAssistant, call: ServiceCall) -> list[tuple[str, 
     if isinstance(device_ids, str):
         device_ids = [device_ids]
 
-    loaded_ids = {
-        e.entry_id for e in hass.config_entries.async_loaded_entries(DOMAIN)
-    }
+    loaded_ids = {e.entry_id for e in hass.config_entries.async_loaded_entries(DOMAIN)}
 
     device_reg = dr.async_get(hass)
     pairs: list[tuple[str, str]] = []
@@ -173,10 +172,7 @@ async def _handle_stop_charge(hass: HomeAssistant, call: ServiceCall) -> None:
 
 def _all_entries(hass: HomeAssistant) -> list[RatioRuntimeData]:
     """Return all runtime data for loaded integration entries."""
-    return [
-        e.runtime_data
-        for e in hass.config_entries.async_loaded_entries(DOMAIN)
-    ]
+    return [e.runtime_data for e in hass.config_entries.async_loaded_entries(DOMAIN)]
 
 
 def _single_entry(hass: HomeAssistant) -> RatioRuntimeData:
@@ -279,19 +275,28 @@ async def _handle_import_session_history(
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="rate_limited",
-            translation_placeholders={"command": "import_session_history", "error": str(err)},
+            translation_placeholders={
+                "command": "import_session_history",
+                "error": str(err),
+            },
         ) from err
     except RatioConnectionError as err:
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="connection_error",
-            translation_placeholders={"command": "import_session_history", "error": str(err)},
+            translation_placeholders={
+                "command": "import_session_history",
+                "error": str(err),
+            },
         ) from err
     except RatioApiError as err:
         raise HomeAssistantError(
             translation_domain=DOMAIN,
             translation_key="command_failed",
-            translation_placeholders={"command": "import_session_history", "error": str(err)},
+            translation_placeholders={
+                "command": "import_session_history",
+                "error": str(err),
+            },
         ) from err
     return {"imported": imported}  # type: ignore[dict-item]
 
@@ -302,9 +307,7 @@ async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
     schedule = ChargeSchedule(enabled=True, slots=slots)
     for entry_id, serial in _resolve_serials(hass, call):
         client, coordinator = _client_and_coordinator(hass, entry_id)
-        await coordinator.request_command(
-            client.set_charge_schedule, serial, schedule
-        )
+        await coordinator.request_command(client.set_charge_schedule, serial, schedule)
 
 
 async def async_setup_services(hass: HomeAssistant) -> None:

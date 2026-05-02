@@ -1,4 +1,5 @@
 """Number platform for Ratio EV Charging."""
+
 from __future__ import annotations
 
 import logging
@@ -8,12 +9,10 @@ from typing import Any
 from aioratio import RatioClient
 from aioratio.models import SolarSettings, UserSettings
 from aioratio.models.settings import UpperLowerLimitSetting
-
 from homeassistant.components.number import NumberEntity, NumberMode
-from homeassistant.const import UnitOfElectricCurrent, UnitOfTime
+from homeassistant.const import EntityCategory, UnitOfElectricCurrent, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -48,10 +47,18 @@ async def async_setup_entry(
         for serial in new:
             entities.append(RatioSunOnDelayMinutesNumber(coordinator, client, serial))
             entities.append(RatioSunOffDelayMinutesNumber(coordinator, client, serial))
-            entities.append(RatioPureSolarStartingCurrentNumber(coordinator, client, serial))
-            entities.append(RatioSmartSolarStartingCurrentNumber(coordinator, client, serial))
-            entities.append(RatioMaximumChargingCurrentNumber(coordinator, client, serial))
-            entities.append(RatioMinimumChargingCurrentNumber(coordinator, client, serial))
+            entities.append(
+                RatioPureSolarStartingCurrentNumber(coordinator, client, serial)
+            )
+            entities.append(
+                RatioSmartSolarStartingCurrentNumber(coordinator, client, serial)
+            )
+            entities.append(
+                RatioMaximumChargingCurrentNumber(coordinator, client, serial)
+            )
+            entities.append(
+                RatioMinimumChargingCurrentNumber(coordinator, client, serial)
+            )
         known.update(new)
         async_add_entities(entities)
 
@@ -146,9 +153,11 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
             await self._set_user(value)
 
     async def _set_solar(self, value: float) -> None:
-        current: SolarSettings | None = self.coordinator.data.solar_settings.get(
-            self._serial
-        ) if self.coordinator.data is not None else None
+        current: SolarSettings | None = (
+            self.coordinator.data.solar_settings.get(self._serial)
+            if self.coordinator.data is not None
+            else None
+        )
         if current is None:
             current = SolarSettings()
         existing = getattr(current, self._field, None)
@@ -162,9 +171,11 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
         )
 
     async def _set_user(self, value: float) -> None:
-        current: UserSettings | None = self.coordinator.data.user_settings.get(
-            self._serial
-        ) if self.coordinator.data is not None else None
+        current: UserSettings | None = (
+            self.coordinator.data.user_settings.get(self._serial)
+            if self.coordinator.data is not None
+            else None
+        )
         if current is None:
             current = UserSettings()
         existing = getattr(current, self._field, None)
@@ -179,6 +190,7 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
 
 
 # ---- Solar ----
+
 
 class RatioSunOnDelayMinutesNumber(_RatioNumberBase):
     _settings_parent = "solar"
@@ -221,6 +233,7 @@ class RatioSmartSolarStartingCurrentNumber(_RatioNumberBase):
 
 
 # ---- User ----
+
 
 class RatioMaximumChargingCurrentNumber(_RatioNumberBase):
     _settings_parent = "user"

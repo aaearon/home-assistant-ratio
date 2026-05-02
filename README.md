@@ -4,6 +4,7 @@ Home Assistant integration for [Ratio](https://ratio.energy/) EV chargers, backe
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![hacs](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
+[![CI](https://github.com/aaearon/home-assistant-ratio/actions/workflows/ci.yaml/badge.svg)](https://github.com/aaearon/home-assistant-ratio/actions/workflows/ci.yaml)
 
 ## What this does
 
@@ -297,8 +298,11 @@ logger:
 ```bash
 git clone https://github.com/aaearon/home-assistant-ratio
 cd home-assistant-ratio
-pip install pytest-homeassistant-custom-component
+pip install pytest-homeassistant-custom-component aioratio==0.6.0 ruff mypy
 pytest
+ruff check custom_components tests   # lint
+ruff format custom_components tests  # format
+mypy custom_components/ratio/        # type check
 ```
 
 Tests use `MockConfigEntry`, the real `device_registry` fixture, and a
