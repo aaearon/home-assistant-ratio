@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -306,6 +307,8 @@ HISTORY_BACKFILL_DAYS = 30
 HISTORY_OVERLAP_SECONDS = 3600  # 1-hour overlap on incremental polls
 # Cap the dedup ID set so it can't grow unbounded across years of polling.
 DEDUP_ID_LIMIT = 2000
+# How many recent sessions to persist so they survive a HA restart.
+HISTORY_PERSIST_SESSIONS = 50
 
 
 def _session_begin(session: Session) -> int:
@@ -349,6 +352,9 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         self._last_imported_end_time: dict[str, int] = {}
         self._seen_ids: dict[str, list[str]] = {}
         self._running_total: dict[str, float] = {}
+        # Recent sessions persisted to survive HA restarts (self.data is None
+        # on first refresh after restart; this seeds the surface list).
+        self._persisted_sessions: dict[str, list[Session]] = {}
         self._loaded = False
 
     async def async_load(self) -> None:
@@ -376,14 +382,30 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                     for k, v in rt.items()
                     if isinstance(v, (int, float))
                 }
+            raw_sessions = stored.get("sessions")
+            if isinstance(raw_sessions, dict):
+                for serial_key, raw_list in raw_sessions.items():
+                    if not isinstance(raw_list, list):
+                        continue
+                    parsed: list[Session] = []
+                    for raw_s in raw_list:
+                        if isinstance(raw_s, dict):
+                            with contextlib.suppress(Exception):
+                                parsed.append(Session.from_dict(raw_s))
+                    self._persisted_sessions[str(serial_key)] = parsed
         self._loaded = True
 
-    async def _async_save(self) -> None:
+    async def _async_save(self, latest_result: dict[str, list[Session]]) -> None:
+        sessions_to_persist: dict[str, list[dict[str, Any]]] = {
+            serial: [s.to_dict() for s in session_list[-HISTORY_PERSIST_SESSIONS:]]
+            for serial, session_list in latest_result.items()
+        }
         await self._store.async_save(
             {
                 "last_imported_end_time": dict(self._last_imported_end_time),
                 "seen_ids": {k: list(v) for k, v in self._seen_ids.items()},
                 "running_total": dict(self._running_total),
+                "sessions": sessions_to_persist,
             }
         )
 
@@ -534,7 +556,10 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
             self._seen_ids[serial] = id_list
 
             # Surface the most recent N sessions to consumers (sorted asc).
-            prior = (self.data or {}).get(serial, [])
+            # Fall back to persisted sessions on first refresh after restart
+            # (self.data is None until the coordinator has completed at least
+            # one successful update).
+            prior = (self.data or self._persisted_sessions).get(serial, [])
             combined = prior + new_sessions
             # Deduplicate by session_id while preserving order.
             unique: dict[str, Session] = {}
@@ -543,5 +568,5 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
             merged = sorted(unique.values(), key=_session_begin)
             result[serial] = merged[-DEDUP_ID_LIMIT:]
 
-        await self._async_save()
+        await self._async_save(result)
         return result

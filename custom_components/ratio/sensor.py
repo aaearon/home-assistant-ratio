@@ -128,6 +128,14 @@ DIAGNOSTIC_SENSOR_DESCRIPTIONS: tuple[RatioDiagnosticSensorDescription, ...] = (
         value_fn=lambda d: _mc(d).serial_number if _mc(d) else None,
     ),
     RatioDiagnosticSensorDescription(
+        key="connectivity_serial_number",
+        translation_key="connectivity_serial_number",
+        name="Connectivity serial number",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+        value_fn=lambda d: _cc(d).serial_number if _cc(d) else None,
+    ),
+    RatioDiagnosticSensorDescription(
         key="hardware_type",
         translation_key="hardware_type",
         name="Hardware type",

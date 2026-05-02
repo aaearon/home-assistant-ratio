@@ -30,7 +30,7 @@ Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/
 
 Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
 
-Home Assistant will install `aioratio==0.6.0` from PyPI automatically; no extra Python deps to manage.
+Home Assistant will install `aioratio==0.7.0` from PyPI automatically; no extra Python deps to manage.
 
 ## Removing the Integration
 
@@ -229,7 +229,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
 +--------------------|-----+
                      v
               +---------------+
-              |   aioratio    |   <-- pinned: aioratio==0.6.0
+              |   aioratio    |   <-- pinned: aioratio==0.7.0
               |  (PyPI lib)   |
               +-------|-------+
                       v
@@ -298,7 +298,7 @@ logger:
 ```bash
 git clone https://github.com/aaearon/home-assistant-ratio
 cd home-assistant-ratio
-pip install pytest-homeassistant-custom-component aioratio==0.6.0 ruff mypy
+pip install pytest-homeassistant-custom-component aioratio==0.7.0 ruff mypy
 pytest
 ruff check custom_components tests   # lint
 ruff format custom_components tests  # format

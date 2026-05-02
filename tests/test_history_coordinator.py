@@ -19,6 +19,7 @@ from custom_components.ratio.coordinator import (
     RatioData,
     RatioHistoryCoordinator,
 )
+from custom_components.ratio.sensor import _last_session
 
 
 def _session(sid: str, serial: str, begin_ts: int, energy: int = 1000) -> Session:
@@ -166,6 +167,51 @@ async def test_running_total_persists_across_restart(hass: HomeAssistant) -> Non
         assert [s.session_id for s in args[2]] == ["id-2"]
     # Updated total is persisted again.
     assert coord2._running_total[serial] == 4000.0
+
+
+@pytest.mark.asyncio
+async def test_sessions_survive_restart_with_no_new_sessions(
+    hass: HomeAssistant,
+) -> None:
+    """Regression: after restart, last-session sensors must not go unknown.
+
+    Root cause: on first refresh after restart self.data is None, and
+    _seen_ids already contains all previous session IDs, so new_sessions=[].
+    Without persisting sessions, prior=[] and result[serial]=[] — sensors go
+    to "unknown" until a brand-new charging session occurs.
+    """
+    serial = "S5"
+    entry = _make_entry(hass, entry_id="e5")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("id-1", serial, 1_700_000_000, energy=5000)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    coord1 = RatioHistoryCoordinator(hass, client, entry, main)
+    with _patch_import():
+        await coord1.async_config_entry_first_refresh()
+
+    assert coord1.data is not None
+    assert coord1.data[serial][0].session_id == "id-1"
+
+    # Simulate restart: new coordinator, no new sessions from API.
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[], next_token=None)
+    )
+    coord2 = RatioHistoryCoordinator(hass, client, entry, main)
+    with _patch_import():
+        await coord2.async_config_entry_first_refresh()
+
+    # Sessions must be re-hydrated from persisted storage.
+    assert coord2.data is not None
+    assert serial in coord2.data
+    assert len(coord2.data[serial]) == 1
+    assert coord2.data[serial][0].session_id == "id-1"
+    # _last_session must return the session (not None).
+    assert _last_session(coord2, serial) is not None
+    assert _last_session(coord2, serial).session_id == "id-1"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio

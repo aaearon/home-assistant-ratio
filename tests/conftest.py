@@ -7,6 +7,7 @@ Requires ``pytest-homeassistant-custom-component``. Install with:
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,7 +15,17 @@ import pytest
 from aioratio.models.history import SessionHistoryPage
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+import custom_components
 from custom_components.ratio.const import DOMAIN
+
+# The editable install injects a PATH_PLACEHOLDER string into
+# custom_components.__path__ so namespace packages resolve correctly.
+# HA's loader calls pathlib.Path(p).iterdir() on every entry in that __path__,
+# which raises FileNotFoundError for the placeholder.  Strip any non-existent
+# entries once at import time so the loader only sees real directories.
+custom_components.__path__ = [  # type: ignore[assignment]
+    p for p in custom_components.__path__ if pathlib.Path(p).is_dir()
+]
 
 
 @pytest.fixture(autouse=True)
