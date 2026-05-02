@@ -1,4 +1,5 @@
 """Text platform for Ratio EV Charging."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -7,7 +8,6 @@ from typing import Any
 
 from aioratio import RatioClient
 from aioratio.models import InstallerOcppSettings
-
 from homeassistant.components.text import TextEntity, TextMode
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -105,7 +105,10 @@ class RatioChargePointIdentifierText(CoordinatorEntity[RatioCoordinator], TextEn
     @property
     def native_max(self) -> int:
         settings = self._ocpp_settings()
-        if settings is not None and settings.charge_point_identifier_max_length is not None:
+        if (
+            settings is not None
+            and settings.charge_point_identifier_max_length is not None
+        ):
             return settings.charge_point_identifier_max_length
         return 255
 

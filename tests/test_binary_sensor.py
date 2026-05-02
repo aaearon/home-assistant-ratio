@@ -1,15 +1,14 @@
 """Tests for the Ratio binary sensor platform."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
 import pytest
 from aioratio.models import ChargerOverview
-
 from homeassistant.core import HomeAssistant
 
 from custom_components.ratio.coordinator import RatioData
-
 
 SERIAL = "SN001"
 
@@ -91,7 +90,7 @@ async def test_binary_sensors_created(
     # Entity IDs are derived from device name + entity name, not key.
     expected_suffixes = [
         "vehicle_connected",
-        "charging",           # charge_session_active -> name "Charging"
+        "charging",  # charge_session_active -> name "Charging"
         "charging_paused",
         "error",
         "charging_disabled",

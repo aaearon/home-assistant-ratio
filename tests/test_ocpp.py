@@ -1,19 +1,21 @@
 """Tests for OCPP switch, CPMS select, and charge point identifier text entities."""
-from __future__ import annotations
 
-import pytest
-from aioratio.models import ChargerOverview, CpmsConfig, InstallerOcppSettings, OcppFieldStatus
-from aioratio.models.diagnostics import ChargerDiagnostics
+from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from homeassistant.core import HomeAssistant
+import pytest
+from aioratio.models import (
+    ChargerOverview,
+    CpmsConfig,
+    InstallerOcppSettings,
+    OcppFieldStatus,
+)
 
 from custom_components.ratio.coordinator import RatioData
 from custom_components.ratio.select import RatioCpmsSelect
 from custom_components.ratio.switch import RatioOcppEnabledSwitch
 from custom_components.ratio.text import RatioChargePointIdentifierText
-
 
 SERIAL = "SN001"
 
@@ -42,7 +44,9 @@ def _make_ocpp(
     )
 
 
-def _coord(ocpp: InstallerOcppSettings, cpms_opts: list[CpmsConfig] | None = None) -> MagicMock:
+def _coord(
+    ocpp: InstallerOcppSettings, cpms_opts: list[CpmsConfig] | None = None
+) -> MagicMock:
     coord = MagicMock()
     coord.data = RatioData(
         chargers={SERIAL: _make_overview()},

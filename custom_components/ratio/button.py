@@ -1,15 +1,15 @@
 """Button platform for Ratio EV Charging."""
+
 from __future__ import annotations
 
 import logging
 
 from aioratio import RatioClient
 from aioratio.models import ChargerOverview
-
 from homeassistant.components.button import ButtonEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.const import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 

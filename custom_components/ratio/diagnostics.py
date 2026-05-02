@@ -1,4 +1,5 @@
 """Diagnostics support for Ratio EV Charging."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass

@@ -1,7 +1,8 @@
 """Tests for the external statistics importer."""
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from aioratio.models.history import Session, TimeData
 
@@ -53,8 +54,8 @@ def test_build_statistics_monotonic_sum_and_hour_floor() -> None:
     assert len(stats) == 2
 
     # Hours should be floored.
-    assert stats[0]["start"] == datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc)
-    assert stats[1]["start"] == datetime(2024, 1, 1, 13, 0, tzinfo=timezone.utc)
+    assert stats[0]["start"] == datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
+    assert stats[1]["start"] == datetime(2024, 1, 1, 13, 0, tzinfo=UTC)
 
     assert stats[0]["state"] == 1500.0
     assert stats[1]["state"] == 2500.0

@@ -1,4 +1,5 @@
 """Switch platform for Ratio EV Charging."""
+
 from __future__ import annotations
 
 import dataclasses
@@ -7,7 +8,6 @@ from typing import Any
 
 from aioratio import RatioClient
 from aioratio.models import InstallerOcppSettings
-
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -125,9 +125,7 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
                 translation_key="charge_stop_not_allowed",
                 translation_placeholders={"state": str(state)},
             )
-        await self.coordinator.request_command(
-            self._client.stop_charge, self._serial
-        )
+        await self.coordinator.request_command(self._client.stop_charge, self._serial)
 
     def _charger_status(self) -> Any:
         if self.coordinator.data is None:

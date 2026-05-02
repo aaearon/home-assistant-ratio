@@ -4,6 +4,7 @@ Requires ``pytest-homeassistant-custom-component``. Install with:
 
     pip install pytest-homeassistant-custom-component
 """
+
 from __future__ import annotations
 
 from collections.abc import Generator

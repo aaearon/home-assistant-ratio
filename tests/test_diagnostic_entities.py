@@ -1,9 +1,9 @@
 """Tests for diagnostic sensor and binary sensor entities."""
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
-import pytest
 from aioratio.models import ChargerOverview, InstallerOcppSettings
 from aioratio.models.diagnostics import (
     BackendStatus,
@@ -25,11 +25,10 @@ from custom_components.ratio.binary_sensor import (
 from custom_components.ratio.coordinator import RatioData
 from custom_components.ratio.sensor import (
     DIAGNOSTIC_SENSOR_DESCRIPTIONS,
+    OCPP_SENSOR_DESCRIPTIONS,
     RatioDiagnosticSensor,
     RatioOcppSensor,
-    OCPP_SENSOR_DESCRIPTIONS,
 )
-
 
 SERIAL = "SN001"
 
@@ -55,7 +54,11 @@ def _make_full_diag() -> ChargerDiagnostics:
                 connected=True,
                 ssid="HomeNet",
                 rssi=-55,
-                ipv4=Ipv4(address="192.168.1.50", netmask="255.255.255.0", gateway="192.168.1.1"),
+                ipv4=Ipv4(
+                    address="192.168.1.50",
+                    netmask="255.255.255.0",
+                    gateway="192.168.1.1",
+                ),
             ),
             ethernet=EthernetStatus(connected=False, ipv4=None),
         ),
@@ -69,7 +72,9 @@ def _make_full_diag() -> ChargerDiagnostics:
     )
 
 
-def _coord_with_diag(diag: ChargerDiagnostics, ocpp: InstallerOcppSettings | None = None) -> MagicMock:
+def _coord_with_diag(
+    diag: ChargerDiagnostics, ocpp: InstallerOcppSettings | None = None
+) -> MagicMock:
     coord = MagicMock()
     coord.data = RatioData(
         chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
@@ -116,12 +121,18 @@ def test_firmware_version_sensor() -> None:
 
 
 def test_hardware_version_sensor_disabled_by_default() -> None:
-    desc = next(d for d in DIAGNOSTIC_SENSOR_DESCRIPTIONS if d.key == "hardware_version")
+    desc = next(
+        d for d in DIAGNOSTIC_SENSOR_DESCRIPTIONS if d.key == "hardware_version"
+    )
     assert desc.entity_registry_enabled_default is False
 
 
 def test_connectivity_firmware_version_sensor_disabled_by_default() -> None:
-    desc = next(d for d in DIAGNOSTIC_SENSOR_DESCRIPTIONS if d.key == "connectivity_firmware_version")
+    desc = next(
+        d
+        for d in DIAGNOSTIC_SENSOR_DESCRIPTIONS
+        if d.key == "connectivity_firmware_version"
+    )
     assert desc.entity_registry_enabled_default is False
 
 
@@ -152,13 +163,17 @@ def test_cpms_url_sensor() -> None:
 
 def test_sensor_returns_none_when_no_diagnostics() -> None:
     coord = MagicMock()
-    coord.data = RatioData(chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})})
+    coord.data = RatioData(
+        chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})}
+    )
     assert _diag_sensor(coord, "cpc_serial_number").native_value is None
 
 
 def test_sensor_resilient_to_missing_wifi() -> None:
     """wifi_ssid sensor returns None when wifi is None."""
-    diag = ChargerDiagnostics(network_status=NetworkStatus(connection_medium="ETHERNET"))
+    diag = ChargerDiagnostics(
+        network_status=NetworkStatus(connection_medium="ETHERNET")
+    )
     coord = _coord_with_diag(diag)
     assert _diag_sensor(coord, "wifi_ssid").native_value is None
     assert _diag_sensor(coord, "wifi_rssi").native_value is None
@@ -186,7 +201,9 @@ def test_charge_point_identifier_sensor() -> None:
 
 def test_charge_point_identifier_sensor_none_when_no_ocpp() -> None:
     coord = MagicMock()
-    coord.data = RatioData(chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})})
+    coord.data = RatioData(
+        chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})}
+    )
     assert _ocpp_sensor(coord, "charge_point_identifier").native_value is None
 
 
@@ -222,7 +239,9 @@ def test_time_synchronized_binary_sensor() -> None:
 
 def test_binary_sensor_returns_none_when_no_diagnostics() -> None:
     coord = MagicMock()
-    coord.data = RatioData(chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})})
+    coord.data = RatioData(
+        chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})}
+    )
     assert _diag_binary(coord, "backend_connected").is_on is None
 
 

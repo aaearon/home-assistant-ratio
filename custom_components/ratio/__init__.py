@@ -1,17 +1,13 @@
 """The Ratio EV Charging integration."""
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
 from typing import Any
-try:
-    from typing import TypeAlias
-except ImportError:
-    from typing_extensions import TypeAlias  # type: ignore[assignment]
 
 from aioratio import JsonFileTokenStore, RatioClient
 from aioratio.exceptions import RatioAuthError
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
@@ -35,7 +31,7 @@ class RatioRuntimeData:
     history_coordinator: RatioHistoryCoordinator
 
 
-RatioConfigEntry: TypeAlias = ConfigEntry[RatioRuntimeData]
+type RatioConfigEntry = ConfigEntry[RatioRuntimeData]
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -74,9 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> boo
         await coordinator.async_load_preferences()
         await coordinator.async_config_entry_first_refresh()
 
-        history_coordinator = RatioHistoryCoordinator(
-            hass, client, entry, coordinator
-        )
+        history_coordinator = RatioHistoryCoordinator(hass, client, entry, coordinator)
         await history_coordinator.async_load()
 
         entry.runtime_data = RatioRuntimeData(

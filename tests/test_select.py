@@ -1,4 +1,5 @@
 """Tests for Ratio select entities."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -7,11 +8,11 @@ import pytest
 from aioratio.models import UserSettings, Vehicle
 from aioratio.models.settings import EnumValue
 
-from homeassistant.core import HomeAssistant
-
 from custom_components.ratio.coordinator import RatioData
-from custom_components.ratio.select import RatioActiveVehicleSelect, RatioChargeModeSelect
-
+from custom_components.ratio.select import (
+    RatioActiveVehicleSelect,
+    RatioChargeModeSelect,
+)
 
 SERIAL = "SN001"
 

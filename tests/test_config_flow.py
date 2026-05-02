@@ -1,11 +1,11 @@
 """Smoke tests for the Ratio config flow."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from aioratio.exceptions import RatioAuthError, RatioConnectionError, RatioError
-
 from homeassistant import config_entries
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant

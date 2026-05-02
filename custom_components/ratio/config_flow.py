@@ -1,4 +1,5 @@
 """Config flow for the Ratio EV Charging integration."""
+
 from __future__ import annotations
 
 import logging
@@ -8,7 +9,6 @@ from typing import Any
 import voluptuous as vol
 from aioratio import MemoryTokenStore, RatioClient
 from aioratio.exceptions import RatioAuthError, RatioConnectionError, RatioError
-
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
@@ -26,9 +26,7 @@ USER_SCHEMA = vol.Schema(
 )
 
 
-async def _validate_credentials(
-    hass: HomeAssistant, email: str, password: str
-) -> None:
+async def _validate_credentials(hass: HomeAssistant, email: str, password: str) -> None:
     """Attempt a login. Raises RatioAuthError / RatioConnectionError on failure."""
     session = async_get_clientsession(hass)
     client = RatioClient(
@@ -116,9 +114,7 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
                     self._reauth_entry,
                     data={**self._reauth_entry.data, CONF_PASSWORD: password},
                 )
-                await self.hass.config_entries.async_reload(
-                    self._reauth_entry.entry_id
-                )
+                await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
                 return self.async_abort(reason="reauth_successful")
 
         return self.async_show_form(
@@ -163,7 +159,9 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="reconfigure",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_EMAIL, default=reconfigure_entry.data.get(CONF_EMAIL, "")): str,
+                    vol.Required(
+                        CONF_EMAIL, default=reconfigure_entry.data.get(CONF_EMAIL, "")
+                    ): str,
                     vol.Required(CONF_PASSWORD): str,
                 }
             ),

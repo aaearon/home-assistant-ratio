@@ -1,4 +1,5 @@
 """Tests for firmware diagnostic sensors and grant-permission button (C4, C5)."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -7,13 +8,12 @@ import pytest
 from aioratio.models import ChargerOverview
 from aioratio.models.charger import ChargerFirmwareStatus, FirmwareUpdateJob
 
-from custom_components.ratio.coordinator import RatioData
-
 from custom_components.ratio.binary_sensor import (
     FIRMWARE_BINARY_SENSOR_DESCRIPTIONS,
     RatioBinarySensor,
 )
 from custom_components.ratio.button import RatioGrantUpgradePermissionButton
+from custom_components.ratio.coordinator import RatioData
 from custom_components.ratio.sensor import (
     FIRMWARE_SENSOR_DESCRIPTIONS,
     RatioSensor,
@@ -49,7 +49,10 @@ def test_firmware_binary_sensors_map_when_present() -> None:
 
     assert _firmware_binary(coord, "SN001", "firmware_update_available").is_on is True
     assert _firmware_binary(coord, "SN001", "firmware_update_allowed").is_on is False
-    assert _firmware_sensor(coord, "SN001", "firmware_update_status").native_value == "awaitingPermission"
+    assert (
+        _firmware_sensor(coord, "SN001", "firmware_update_status").native_value
+        == "awaitingPermission"
+    )
 
 
 def test_firmware_entities_when_status_absent_return_none() -> None:
@@ -57,11 +60,15 @@ def test_firmware_entities_when_status_absent_return_none() -> None:
     coord = _coord(ov)
     assert _firmware_binary(coord, "SN001", "firmware_update_available").is_on is None
     assert _firmware_binary(coord, "SN001", "firmware_update_allowed").is_on is None
-    assert _firmware_sensor(coord, "SN001", "firmware_update_status").native_value is None
+    assert (
+        _firmware_sensor(coord, "SN001", "firmware_update_status").native_value is None
+    )
 
 
 def test_firmware_status_sensor_disabled_by_default() -> None:
-    desc = next(d for d in FIRMWARE_SENSOR_DESCRIPTIONS if d.key == "firmware_update_status")
+    desc = next(
+        d for d in FIRMWARE_SENSOR_DESCRIPTIONS if d.key == "firmware_update_status"
+    )
     assert desc.entity_registry_enabled_default is False
 
 
