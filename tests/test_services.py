@@ -224,6 +224,43 @@ async def test_set_schedule_accepts_three_letter_day_abbreviations(
 
 
 @pytest.mark.asyncio
+async def test_set_schedule_accepts_single_digit_hour_and_zero_pads(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """``"7:00"`` was accepted by the previous loose schema and round-tripped
+    through aioratio fine; the schema must keep accepting it (and zero-pad
+    before the cloud call) instead of breaking existing automations.
+    """
+    from aioratio.models import ChargeSchedule
+
+    entry = setup_integration
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "SN-SINGLE")},
+    )
+
+    await hass.services.async_call(
+        DOMAIN,
+        "set_schedule",
+        {
+            "device_id": device.id,
+            "slots": [{"start": "7:00", "end": "9:30", "days": ["monday"]}],
+        },
+        blocking=True,
+    )
+
+    client = mock_ratio_client.return_value
+    client.set_charge_schedule.assert_awaited_once()
+    schedule: ChargeSchedule = client.set_charge_schedule.await_args.args[1]
+    slot = schedule.slots[0]
+    assert slot.start == "07:00"
+    assert slot.end == "09:30"
+
+
+@pytest.mark.asyncio
 async def test_add_vehicle_returns_vehicle_id_in_response(
     hass: HomeAssistant,
     setup_integration: MockConfigEntry,

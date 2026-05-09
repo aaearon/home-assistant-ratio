@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -58,7 +59,20 @@ STOP_CHARGE_SCHEMA = vol.Schema(
     }
 )
 
-_HHMM_RE = r"^(?:[01]\d|2[0-3]):[0-5]\d$"
+# Accept both zero-padded ("07:00") and single-digit-hour ("7:00") forms;
+# the previous schema accepted any string and aioratio happily parsed both,
+# so refusing "7:00" outright would break existing automations.
+_HHMM_RE = re.compile(r"^(?:[01]?\d|2[0-3]):[0-5]\d$")
+
+
+def _normalize_hhmm(value: Any) -> str:
+    """Validate ``H:MM``/``HH:MM`` and return the zero-padded ``HH:MM`` form."""
+    s = cv.string(value)
+    if not _HHMM_RE.match(s):
+        raise vol.Invalid(f"time {value!r} must be HH:MM (00:00-23:59)")
+    h, m = s.split(":")
+    return f"{int(h):02d}:{m}"
+
 
 # Accept both full English day names and 3-letter abbreviations; ``aioratio``
 # normalises them to lower-case full names internally.
@@ -108,10 +122,10 @@ def _slot_has_start_and_end(slot: dict[str, Any]) -> dict[str, Any]:
 SLOT_SCHEMA = vol.All(
     vol.Schema(
         {
-            vol.Optional("start"): vol.All(cv.string, vol.Match(_HHMM_RE)),
-            vol.Optional("startTime"): vol.All(cv.string, vol.Match(_HHMM_RE)),
-            vol.Optional("end"): vol.All(cv.string, vol.Match(_HHMM_RE)),
-            vol.Optional("endTime"): vol.All(cv.string, vol.Match(_HHMM_RE)),
+            vol.Optional("start"): _normalize_hhmm,
+            vol.Optional("startTime"): _normalize_hhmm,
+            vol.Optional("end"): _normalize_hhmm,
+            vol.Optional("endTime"): _normalize_hhmm,
             vol.Optional("days"): vol.All(cv.ensure_list, [_validated_day]),
         }
     ),
