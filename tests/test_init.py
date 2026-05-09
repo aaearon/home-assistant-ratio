@@ -163,3 +163,44 @@ async def test_stale_device_removal_allowed(hass: HomeAssistant) -> None:
     # When coordinator.data is None, deny removal (can't confirm stale)
     coordinator.data = None
     assert await async_remove_config_entry_device(hass, entry, stale_device) is False
+
+
+@pytest.mark.asyncio
+async def test_migrate_entry_accepts_current_version(hass: HomeAssistant) -> None:
+    """``async_migrate_entry`` should accept current-schema entries cleanly."""
+    from custom_components.ratio import async_migrate_entry
+
+    entry = MockConfigEntry(domain=DOMAIN, data={}, version=1)
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry) is True
+    assert entry.version == 1
+
+
+@pytest.mark.asyncio
+async def test_migrate_entry_advances_older_version(hass: HomeAssistant) -> None:
+    """An entry claiming a lower version must be bumped, not just ack'd.
+
+    Regression test for the Copilot review finding that returning ``True``
+    without calling ``async_update_entry`` would loop migration on every
+    restart.
+    """
+    from custom_components.ratio import async_migrate_entry
+
+    entry = MockConfigEntry(domain=DOMAIN, data={}, version=0)
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry) is True
+    assert entry.version == 1
+
+
+@pytest.mark.asyncio
+async def test_migrate_entry_refuses_downgrade(hass: HomeAssistant) -> None:
+    """An entry from a future version must surface as a setup failure."""
+    from custom_components.ratio import async_migrate_entry
+
+    entry = MockConfigEntry(domain=DOMAIN, data={}, version=2)
+    entry.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, entry) is False
+    assert entry.version == 2  # not silently downgraded

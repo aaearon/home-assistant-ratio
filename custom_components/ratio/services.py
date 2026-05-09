@@ -302,12 +302,10 @@ async def _handle_remove_vehicle(hass: HomeAssistant, call: ServiceCall) -> None
         ) from err
     await coordinator.async_request_refresh()
 
-    # Drop any preferred_vehicle entries that pointed at the removed vehicle.
-    stale = [s for s, vid in coordinator.preferred_vehicle.items() if vid == vehicle_id]
-    if stale:
-        for s in stale:
-            coordinator.preferred_vehicle.pop(s, None)
-        await coordinator.async_save_preferences()
+    # Drop any preferred_vehicle entries that pointed at the removed vehicle,
+    # holding the coordinator's prefs lock for the entire mutate+save so the
+    # change can't interleave with a concurrent select-option update.
+    await coordinator.async_remove_preferred_vehicle_id(vehicle_id)
 
 
 async def _handle_import_session_history(

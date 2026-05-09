@@ -114,13 +114,33 @@ async def async_unload_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> bo
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Migrate an old config entry to the current schema.
 
-    Currently a no-op — only ``VERSION = 1`` exists. Kept in place so the
-    next schema change can land cleanly without simultaneously introducing
-    the migration scaffolding.
+    Only ``VERSION = 1`` has ever shipped, so no entries from earlier
+    versions exist in the wild. We still bump anything that claims a
+    lower version number to 1 so the migration framework records progress
+    and HA does not loop calling this function on every restart. When
+    schema v2 ships, add an explicit ``if entry.version == 1:`` branch
+    above the down-migration guard that updates the data and bumps the
+    version number.
     """
-    # Down-migration: refuse so HA will surface a setup error instead of
-    # silently corrupting newer data.
-    return entry.version <= 1
+    if entry.version > 1:
+        # Down-migration: refuse so HA surfaces a setup error instead of
+        # silently corrupting newer data.
+        _LOGGER.error(
+            "Cannot downgrade Ratio config entry %s from v%s to v1",
+            entry.entry_id,
+            entry.version,
+        )
+        return False
+    if entry.version < 1:
+        # Defensive: should never appear in the wild. Bump forward so HA
+        # records the migration as complete and stops re-invoking us.
+        _LOGGER.debug(
+            "Bumping Ratio config entry %s from v%s to v1 (no data changes)",
+            entry.entry_id,
+            entry.version,
+        )
+        hass.config_entries.async_update_entry(entry, version=1)
+    return True
 
 
 async def async_remove_config_entry_device(

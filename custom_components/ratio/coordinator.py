@@ -104,15 +104,42 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
                 }
 
     async def async_save_preferences(self) -> None:
-        """Persist preferred_vehicle map to disk."""
-        await self._prefs_store.async_save(
-            {"preferred_vehicle": dict(self.preferred_vehicle)}
-        )
+        """Persist preferred_vehicle map to disk.
+
+        Holds ``_prefs_lock`` so a concurrent locked mutation cannot snapshot
+        the dict mid-update. Mutate-then-save callers should prefer one of
+        the dedicated helpers (``async_set_preferred_vehicle``,
+        ``async_remove_preferred_vehicle_id``) which keep the mutation and
+        the save inside a single critical section.
+        """
+        async with self._prefs_lock:
+            await self._prefs_store.async_save(
+                {"preferred_vehicle": dict(self.preferred_vehicle)}
+            )
 
     async def async_set_preferred_vehicle(self, serial: str, vehicle_id: str) -> None:
         """Atomically update and persist the preferred vehicle for ``serial``."""
         async with self._prefs_lock:
             self.preferred_vehicle[serial] = vehicle_id
+            await self._prefs_store.async_save(
+                {"preferred_vehicle": dict(self.preferred_vehicle)}
+            )
+
+    async def async_remove_preferred_vehicle_id(self, vehicle_id: str) -> None:
+        """Atomically drop every preferred_vehicle entry pointing at ``vehicle_id``.
+
+        Used by the ``remove_vehicle`` service handler to keep the mutation
+        and the persistence step inside the same lock-acquired critical
+        section.
+        """
+        async with self._prefs_lock:
+            stale = [
+                s for s, vid in self.preferred_vehicle.items() if vid == vehicle_id
+            ]
+            if not stale:
+                return
+            for s in stale:
+                self.preferred_vehicle.pop(s, None)
             await self._prefs_store.async_save(
                 {"preferred_vehicle": dict(self.preferred_vehicle)}
             )

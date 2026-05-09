@@ -285,6 +285,36 @@ async def test_remove_vehicle_clears_stale_preferred_entries(
 
 
 @pytest.mark.asyncio
+async def test_remove_vehicle_handler_uses_locked_helper(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """The remove_vehicle service must mutate prefs through the locked helper.
+
+    Regression test for the Copilot review finding that
+    ``async_save_preferences`` was reachable without the lock and could
+    interleave with concurrent ``async_set_preferred_vehicle`` calls.
+    """
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    with patch.object(
+        coordinator,
+        "async_remove_preferred_vehicle_id",
+        new=AsyncMock(),
+    ) as locked_helper:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_REMOVE_VEHICLE,
+            {"vehicle_id": "v-anything"},
+            blocking=True,
+        )
+
+    locked_helper.assert_awaited_once_with("v-anything")
+
+
+@pytest.mark.asyncio
 async def test_remove_vehicle_refresh_prunes_disconnected_charger_prefs(
     hass: HomeAssistant,
     setup_integration: MockConfigEntry,
