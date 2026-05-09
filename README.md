@@ -1,6 +1,6 @@
 # Ratio EV Charging — Home Assistant Integration
 
-Home Assistant integration for [Ratio](https://ratio.energy/) EV chargers, backed by the [`aioratio`](https://pypi.org/project/aioratio/) async client library.
+Home Assistant integration for [Ratio](https://www.ratio-electric.com/) EV chargers, backed by the [`aioratio`](https://pypi.org/project/aioratio/) async client library.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![hacs](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
