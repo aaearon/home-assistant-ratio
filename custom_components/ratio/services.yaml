@@ -18,13 +18,23 @@ stop_charge:
 
 set_schedule:
   name: Set schedule
-  description: Replace the weekly charge schedule for the targeted Ratio charger.
+  description: >-
+    Replace the weekly charge schedule for the targeted Ratio charger.
+    Each slot must include a start time and an end time in HH:MM 24-hour
+    format (e.g. "07:30") and a list of days (Monday-Sunday or 3-letter
+    abbreviations like Mon/Tue).
   target:
   fields:
     slots:
       name: Slots
-      description: List of schedule slots.
+      description: >-
+        List of schedule slots. Each slot is an object with the keys
+        `start` (HH:MM), `end` (HH:MM), and `days` (list of weekday names).
       required: true
+      example: |
+        - start: "07:00"
+          end: "09:00"
+          days: [Mon, Tue, Wed, Thu, Fri]
       selector:
         object:
 

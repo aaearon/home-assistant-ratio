@@ -28,6 +28,11 @@ def _make_coordinator(
     )
     coord.preferred_vehicle = {}
     coord.async_save_preferences = AsyncMock()
+
+    async def _set_preferred(serial: str, vehicle_id: str) -> None:
+        coord.preferred_vehicle[serial] = vehicle_id
+
+    coord.async_set_preferred_vehicle = AsyncMock(side_effect=_set_preferred)
     return coord
 
 
@@ -153,7 +158,7 @@ async def test_active_vehicle_select_option_saves_preference() -> None:
     await entity.async_select_option("BMW")
 
     assert coord.preferred_vehicle[SERIAL] == "v2"
-    coord.async_save_preferences.assert_awaited_once()
+    coord.async_set_preferred_vehicle.assert_awaited_once_with(SERIAL, "v2")
     entity.async_write_ha_state.assert_called_once()
 
 

@@ -58,14 +58,64 @@ STOP_CHARGE_SCHEMA = vol.Schema(
     }
 )
 
-SLOT_SCHEMA = vol.Schema(
+_HHMM_RE = r"^(?:[01]\d|2[0-3]):[0-5]\d$"
+
+# Accept both full English day names and 3-letter abbreviations; ``aioratio``
+# normalises them to lower-case full names internally.
+_VALID_DAYS = frozenset(
     {
-        vol.Optional("start"): cv.string,
-        vol.Optional("startTime"): cv.string,
-        vol.Optional("end"): cv.string,
-        vol.Optional("endTime"): cv.string,
-        vol.Optional("days"): vol.All(cv.ensure_list, [cv.string]),
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri",
+        "sat",
+        "sun",
     }
+)
+
+
+def _validated_day(value: Any) -> str:
+    s = cv.string(value).strip().lower()
+    if s not in _VALID_DAYS:
+        raise vol.Invalid(
+            f"unknown day {value!r}; expected one of "
+            "monday/tuesday/.../sunday or mon/tue/.../sun"
+        )
+    return s
+
+
+def _slot_has_start_and_end(slot: dict[str, Any]) -> dict[str, Any]:
+    """Reject slots that omit both ``start``/``startTime`` or both ``end``/``endTime``.
+
+    The cloud DTO requires both ends. Without this guard the failure surfaces
+    only later, inside ``ScheduleSlot.to_dict()``, with a less clear message.
+    """
+    if "start" not in slot and "startTime" not in slot:
+        raise vol.Invalid("slot must have a start time (start or startTime)")
+    if "end" not in slot and "endTime" not in slot:
+        raise vol.Invalid("slot must have an end time (end or endTime)")
+    return slot
+
+
+SLOT_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Optional("start"): vol.All(cv.string, vol.Match(_HHMM_RE)),
+            vol.Optional("startTime"): vol.All(cv.string, vol.Match(_HHMM_RE)),
+            vol.Optional("end"): vol.All(cv.string, vol.Match(_HHMM_RE)),
+            vol.Optional("endTime"): vol.All(cv.string, vol.Match(_HHMM_RE)),
+            vol.Optional("days"): vol.All(cv.ensure_list, [_validated_day]),
+        }
+    ),
+    _slot_has_start_and_end,
 )
 
 SET_SCHEDULE_SCHEMA = vol.Schema(

@@ -111,6 +111,18 @@ async def async_unload_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> bo
     return unload_ok
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migrate an old config entry to the current schema.
+
+    Currently a no-op — only ``VERSION = 1`` exists. Kept in place so the
+    next schema change can land cleanly without simultaneously introducing
+    the migration scaffolding.
+    """
+    # Down-migration: refuse so HA will surface a setup error instead of
+    # silently corrupting newer data.
+    return entry.version <= 1
+
+
 async def async_remove_config_entry_device(
     hass: HomeAssistant,
     entry: RatioConfigEntry,

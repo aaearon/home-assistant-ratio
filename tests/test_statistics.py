@@ -40,6 +40,53 @@ def test_statistic_id_slugifies_serial() -> None:
     assert statistic_id_for("EVB--X") == "ratio:energy_evb_x"
 
 
+# ---------------------------------------------------------------------------
+# BC lock-in: ``statistic_id_for`` and the underlying ``_slugify_serial``
+# regex form the durable identity of every user's external energy statistic
+# series. Any change to the slugification rule will orphan years of historical
+# statistics for everyone with the integration installed.
+#
+# These are pinned regression tests. **Do not** "clean up" or relax the
+# assertions — if you genuinely need a different slug shape, you must instead
+# add a forward-only migration that re-keys existing recorder rows.
+# ---------------------------------------------------------------------------
+
+
+def test_slug_stability_lowercase_alnum_passthrough() -> None:
+    assert statistic_id_for("abc123") == "ratio:energy_abc123"
+    assert statistic_id_for("zz9999") == "ratio:energy_zz9999"
+
+
+def test_slug_stability_uppercase_lowercased() -> None:
+    assert statistic_id_for("ABC123") == "ratio:energy_abc123"
+
+
+def test_slug_stability_non_alnum_replaced_with_underscore() -> None:
+    assert statistic_id_for("AB-C_123") == "ratio:energy_ab_c_123"
+    assert statistic_id_for("AB.C/123") == "ratio:energy_ab_c_123"
+    assert statistic_id_for("AB C 123") == "ratio:energy_ab_c_123"
+
+
+def test_slug_stability_collapses_runs_of_underscores() -> None:
+    assert statistic_id_for("AB---CD") == "ratio:energy_ab_cd"
+    assert statistic_id_for("AB__CD") == "ratio:energy_ab_cd"
+    assert statistic_id_for("AB...CD") == "ratio:energy_ab_cd"
+
+
+def test_slug_stability_strips_leading_and_trailing_underscores() -> None:
+    assert statistic_id_for("--AB--CD--") == "ratio:energy_ab_cd"
+    assert statistic_id_for("_abc_") == "ratio:energy_abc"
+
+
+def test_slug_stability_real_world_serial_formats() -> None:
+    """Pinned outputs for plausible Ratio serial-number shapes."""
+    # No structural insight into Ratio's serial format is publicly known, so
+    # these cover the categories most likely to appear in the wild.
+    assert statistic_id_for("RTO-2024-0001") == "ratio:energy_rto_2024_0001"
+    assert statistic_id_for("CPC1234567890") == "ratio:energy_cpc1234567890"
+    assert statistic_id_for("R-X1") == "ratio:energy_r_x1"
+
+
 def test_build_statistics_monotonic_sum_and_hour_floor() -> None:
     # Pick timestamps inside two different hours.
     # 2024-01-01 12:34:56 UTC = 1704112496

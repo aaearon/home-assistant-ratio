@@ -80,6 +80,10 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         # Per-charger HA-side preferred vehicle for the next start_charge call.
         # Persisted via HA Store; loaded in async_load_preferences().
         self.preferred_vehicle: dict[str, str] = {}
+        # Serialise mutate-then-save sequences so concurrent select-option
+        # changes (or a refresh-time prune racing a manual save) cannot leave
+        # the on-disk file out of sync with in-memory state.
+        self._prefs_lock = asyncio.Lock()
         # Track last CPMS fetch time; refresh at most every 10 minutes.
         self._cpms_last_fetch: _datetime_type | None = None
         self._prefs_store: Store[dict[str, Any]] = Store(
@@ -104,6 +108,14 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         await self._prefs_store.async_save(
             {"preferred_vehicle": dict(self.preferred_vehicle)}
         )
+
+    async def async_set_preferred_vehicle(self, serial: str, vehicle_id: str) -> None:
+        """Atomically update and persist the preferred vehicle for ``serial``."""
+        async with self._prefs_lock:
+            self.preferred_vehicle[serial] = vehicle_id
+            await self._prefs_store.async_save(
+                {"preferred_vehicle": dict(self.preferred_vehicle)}
+            )
 
     async def _async_update_data(self) -> RatioData:
         """Fetch chargers, then per-charger user/solar settings + vehicles in parallel."""
@@ -253,6 +265,18 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
                     cpms_options_map[serial] = prev.cpms_options[serial]
         elif prev is not None:
             cpms_options_map = dict(prev.cpms_options)
+
+        # Drop preferred_vehicle entries whose charger is no longer reported by
+        # the cloud — keeps the persisted dict bounded over years of polling
+        # as users add and remove devices from their account.
+        stale = set(self.preferred_vehicle) - set(chargers)
+        if stale:
+            async with self._prefs_lock:
+                for serial in stale:
+                    self.preferred_vehicle.pop(serial, None)
+                await self._prefs_store.async_save(
+                    {"preferred_vehicle": dict(self.preferred_vehicle)}
+                )
 
         return RatioData(
             chargers=chargers,

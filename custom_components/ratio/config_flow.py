@@ -67,7 +67,8 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except RatioConnectionError:
                 errors["base"] = "cannot_connect"
-            except RatioError:
+            except RatioError as err:
+                _LOGGER.warning("Ratio API error during config flow: %s", err)
                 errors["base"] = "unknown"
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("Unexpected error during config flow")
@@ -107,7 +108,11 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except RatioConnectionError:
                 errors["base"] = "cannot_connect"
-            except RatioError:
+            except RatioError as err:
+                _LOGGER.warning("Ratio API error during reauth: %s", err)
+                errors["base"] = "unknown"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error during reauth")
                 errors["base"] = "unknown"
             else:
                 self.hass.config_entries.async_update_entry(

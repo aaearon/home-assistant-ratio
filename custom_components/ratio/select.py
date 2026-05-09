@@ -192,8 +192,7 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
         names = self._display_names()
         for vid, display in names.items():
             if display == option:
-                self.coordinator.preferred_vehicle[self._serial] = vid
-                await self.coordinator.async_save_preferences()
+                await self.coordinator.async_set_preferred_vehicle(self._serial, vid)
                 self.async_write_ha_state()
                 return
         _LOGGER.warning(
