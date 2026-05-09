@@ -80,6 +80,10 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         # Per-charger HA-side preferred vehicle for the next start_charge call.
         # Persisted via HA Store; loaded in async_load_preferences().
         self.preferred_vehicle: dict[str, str] = {}
+        # Serialise mutate-then-save sequences so concurrent select-option
+        # changes (or a refresh-time prune racing a manual save) cannot leave
+        # the on-disk file out of sync with in-memory state.
+        self._prefs_lock = asyncio.Lock()
         # Track last CPMS fetch time; refresh at most every 10 minutes.
         self._cpms_last_fetch: _datetime_type | None = None
         self._prefs_store: Store[dict[str, Any]] = Store(
@@ -100,10 +104,45 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
                 }
 
     async def async_save_preferences(self) -> None:
-        """Persist preferred_vehicle map to disk."""
-        await self._prefs_store.async_save(
-            {"preferred_vehicle": dict(self.preferred_vehicle)}
-        )
+        """Persist preferred_vehicle map to disk.
+
+        Holds ``_prefs_lock`` so a concurrent locked mutation cannot snapshot
+        the dict mid-update. Mutate-then-save callers should prefer one of
+        the dedicated helpers (``async_set_preferred_vehicle``,
+        ``async_remove_preferred_vehicle_id``) which keep the mutation and
+        the save inside a single critical section.
+        """
+        async with self._prefs_lock:
+            await self._prefs_store.async_save(
+                {"preferred_vehicle": dict(self.preferred_vehicle)}
+            )
+
+    async def async_set_preferred_vehicle(self, serial: str, vehicle_id: str) -> None:
+        """Atomically update and persist the preferred vehicle for ``serial``."""
+        async with self._prefs_lock:
+            self.preferred_vehicle[serial] = vehicle_id
+            await self._prefs_store.async_save(
+                {"preferred_vehicle": dict(self.preferred_vehicle)}
+            )
+
+    async def async_remove_preferred_vehicle_id(self, vehicle_id: str) -> None:
+        """Atomically drop every preferred_vehicle entry pointing at ``vehicle_id``.
+
+        Used by the ``remove_vehicle`` service handler to keep the mutation
+        and the persistence step inside the same lock-acquired critical
+        section.
+        """
+        async with self._prefs_lock:
+            stale = [
+                s for s, vid in self.preferred_vehicle.items() if vid == vehicle_id
+            ]
+            if not stale:
+                return
+            for s in stale:
+                self.preferred_vehicle.pop(s, None)
+            await self._prefs_store.async_save(
+                {"preferred_vehicle": dict(self.preferred_vehicle)}
+            )
 
     async def _async_update_data(self) -> RatioData:
         """Fetch chargers, then per-charger user/solar settings + vehicles in parallel."""
@@ -253,6 +292,18 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
                     cpms_options_map[serial] = prev.cpms_options[serial]
         elif prev is not None:
             cpms_options_map = dict(prev.cpms_options)
+
+        # Drop preferred_vehicle entries whose charger is no longer reported by
+        # the cloud — keeps the persisted dict bounded over years of polling
+        # as users add and remove devices from their account.
+        stale = set(self.preferred_vehicle) - set(chargers)
+        if stale:
+            async with self._prefs_lock:
+                for serial in stale:
+                    self.preferred_vehicle.pop(serial, None)
+                await self._prefs_store.async_save(
+                    {"preferred_vehicle": dict(self.preferred_vehicle)}
+                )
 
         return RatioData(
             chargers=chargers,

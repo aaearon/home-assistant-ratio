@@ -242,3 +242,33 @@ async def test_pagination_walks_next_tokens(hass: HomeAssistant) -> None:
         c.kwargs.get("next_token") for c in client.session_history.await_args_list
     ]
     assert tokens == [None, "t1", "t2"]
+
+
+@pytest.mark.asyncio
+async def test_pagination_terminates_on_empty_string_next_token(
+    hass: HomeAssistant,
+) -> None:
+    """An empty-string ``next_token`` must terminate pagination, not loop.
+
+    Some upstream APIs surface "no more pages" as ``""`` instead of ``None``;
+    the loop guard in ``_fetch_all_pages`` relies on Python's ``not ""`` being
+    truthy. A regression here would hang the history coordinator forever, so
+    we pin the behaviour with an explicit test.
+    """
+    serial = "S_EMPTY_TOK"
+    entry = _make_entry(hass, entry_id="e_empty_tok")
+    main = _make_main_coordinator([serial])
+
+    s1 = _session("only", serial, 1_700_000_000)
+    pages = [
+        SessionHistoryPage(sessions=[s1], next_token=""),
+    ]
+    client = MagicMock()
+    client.session_history = AsyncMock(side_effect=pages)
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+
+    # Exactly one call — empty-string token is treated as "no more pages".
+    assert client.session_history.await_count == 1

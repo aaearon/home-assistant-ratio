@@ -72,6 +72,10 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
     _attr_has_entity_name = True
     _attr_mode = NumberMode.BOX
     _attr_entity_category = EntityCategory.CONFIG
+    # All current Ratio number settings are integer-valued (whole minutes,
+    # whole amperes); displaying with 0 decimals avoids "6.0000001" surprises
+    # when the cloud returns float-typed integers.
+    _attr_suggested_display_precision = 0
 
     # Subclasses set:
     _settings_parent: str  # "solar" or "user"

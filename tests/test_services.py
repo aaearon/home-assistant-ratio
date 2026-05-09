@@ -109,6 +109,158 @@ async def test_set_schedule_calls_client_directly(
 
 
 @pytest.mark.asyncio
+async def test_set_schedule_rejects_malformed_time(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """Malformed HH:MM strings must be rejected at the service-call boundary."""
+    import voluptuous as vol
+
+    entry = setup_integration
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "SN-BADTIME")},
+    )
+
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(
+            DOMAIN,
+            "set_schedule",
+            {
+                "device_id": device.id,
+                "slots": [{"start": "25:00", "end": "06:00", "days": ["monday"]}],
+            },
+            blocking=True,
+        )
+
+    mock_ratio_client.return_value.set_charge_schedule.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_set_schedule_rejects_unknown_day(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """Unknown day names must be rejected before the cloud call."""
+    import voluptuous as vol
+
+    entry = setup_integration
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "SN-BADDAY")},
+    )
+
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(
+            DOMAIN,
+            "set_schedule",
+            {
+                "device_id": device.id,
+                "slots": [{"start": "07:00", "end": "08:00", "days": ["funday"]}],
+            },
+            blocking=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_set_schedule_rejects_missing_end(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """A slot without an end time must be rejected up front."""
+    import voluptuous as vol
+
+    entry = setup_integration
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "SN-MISSEND")},
+    )
+
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(
+            DOMAIN,
+            "set_schedule",
+            {
+                "device_id": device.id,
+                "slots": [{"start": "07:00", "days": ["monday"]}],
+            },
+            blocking=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_set_schedule_accepts_three_letter_day_abbreviations(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """Three-letter day abbreviations (Mon/Tue/...) are valid input."""
+    entry = setup_integration
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "SN-ABBR")},
+    )
+
+    await hass.services.async_call(
+        DOMAIN,
+        "set_schedule",
+        {
+            "device_id": device.id,
+            "slots": [
+                {"start": "07:00", "end": "08:00", "days": ["Mon", "Wed", "Fri"]}
+            ],
+        },
+        blocking=True,
+    )
+
+    mock_ratio_client.return_value.set_charge_schedule.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_set_schedule_accepts_single_digit_hour_and_zero_pads(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """``"7:00"`` was accepted by the previous loose schema and round-tripped
+    through aioratio fine; the schema must keep accepting it (and zero-pad
+    before the cloud call) instead of breaking existing automations.
+    """
+    from aioratio.models import ChargeSchedule
+
+    entry = setup_integration
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "SN-SINGLE")},
+    )
+
+    await hass.services.async_call(
+        DOMAIN,
+        "set_schedule",
+        {
+            "device_id": device.id,
+            "slots": [{"start": "7:00", "end": "9:30", "days": ["monday"]}],
+        },
+        blocking=True,
+    )
+
+    client = mock_ratio_client.return_value
+    client.set_charge_schedule.assert_awaited_once()
+    schedule: ChargeSchedule = client.set_charge_schedule.await_args.args[1]
+    slot = schedule.slots[0]
+    assert slot.start == "07:00"
+    assert slot.end == "09:30"
+
+
+@pytest.mark.asyncio
 async def test_add_vehicle_returns_vehicle_id_in_response(
     hass: HomeAssistant,
     setup_integration: MockConfigEntry,
@@ -140,8 +292,18 @@ async def test_remove_vehicle_clears_stale_preferred_entries(
     mock_ratio_client: MagicMock,
 ) -> None:
     """ratio.remove_vehicle should drop preferred_vehicle entries pointing at the removed id."""
+    from aioratio.models import ChargerOverview
+
     entry = setup_integration
     coordinator = entry.runtime_data.coordinator
+    # Make all three serials known to the coordinator so the refresh-time
+    # stale-pruning doesn't drop them as unknown chargers; the only entries
+    # that should be removed are the ones whose vehicle_id matches.
+    mock_ratio_client.return_value.chargers_overview.return_value = [
+        ChargerOverview.from_dict({"serialNumber": "SN001"}),
+        ChargerOverview.from_dict({"serialNumber": "SN002"}),
+        ChargerOverview.from_dict({"serialNumber": "SN003"}),
+    ]
     coordinator.preferred_vehicle = {
         "SN001": "v-doomed",
         "SN002": "v-keep",
@@ -157,6 +319,61 @@ async def test_remove_vehicle_clears_stale_preferred_entries(
 
     mock_ratio_client.return_value.remove_vehicle.assert_awaited_once_with("v-doomed")
     assert coordinator.preferred_vehicle == {"SN002": "v-keep"}
+
+
+@pytest.mark.asyncio
+async def test_remove_vehicle_handler_uses_locked_helper(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """The remove_vehicle service must mutate prefs through the locked helper.
+
+    Regression test for the Copilot review finding that
+    ``async_save_preferences`` was reachable without the lock and could
+    interleave with concurrent ``async_set_preferred_vehicle`` calls.
+    """
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    with patch.object(
+        coordinator,
+        "async_remove_preferred_vehicle_id",
+        new=AsyncMock(),
+    ) as locked_helper:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_REMOVE_VEHICLE,
+            {"vehicle_id": "v-anything"},
+            blocking=True,
+        )
+
+    locked_helper.assert_awaited_once_with("v-anything")
+
+
+@pytest.mark.asyncio
+async def test_remove_vehicle_refresh_prunes_disconnected_charger_prefs(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """Refreshing the coordinator should drop preferred_vehicle entries for chargers no longer reported."""
+    from aioratio.models import ChargerOverview
+
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+    # SN001 still reported by the cloud; SN_GONE has been removed from the account.
+    mock_ratio_client.return_value.chargers_overview.return_value = [
+        ChargerOverview.from_dict({"serialNumber": "SN001"}),
+    ]
+    coordinator.preferred_vehicle = {
+        "SN001": "v-keep",
+        "SN_GONE": "v-orphan",
+    }
+
+    await coordinator.async_refresh()
+
+    assert coordinator.preferred_vehicle == {"SN001": "v-keep"}
 
 
 @pytest.mark.asyncio

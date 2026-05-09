@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -58,14 +59,77 @@ STOP_CHARGE_SCHEMA = vol.Schema(
     }
 )
 
-SLOT_SCHEMA = vol.Schema(
+# Accept both zero-padded ("07:00") and single-digit-hour ("7:00") forms;
+# the previous schema accepted any string and aioratio happily parsed both,
+# so refusing "7:00" outright would break existing automations.
+_HHMM_RE = re.compile(r"^(?:[01]?\d|2[0-3]):[0-5]\d$")
+
+
+def _normalize_hhmm(value: Any) -> str:
+    """Validate ``H:MM``/``HH:MM`` and return the zero-padded ``HH:MM`` form."""
+    s = cv.string(value)
+    if not _HHMM_RE.match(s):
+        raise vol.Invalid(f"time {value!r} must be HH:MM (00:00-23:59)")
+    h, m = s.split(":")
+    return f"{int(h):02d}:{m}"
+
+
+# Accept both full English day names and 3-letter abbreviations; ``aioratio``
+# normalises them to lower-case full names internally.
+_VALID_DAYS = frozenset(
     {
-        vol.Optional("start"): cv.string,
-        vol.Optional("startTime"): cv.string,
-        vol.Optional("end"): cv.string,
-        vol.Optional("endTime"): cv.string,
-        vol.Optional("days"): vol.All(cv.ensure_list, [cv.string]),
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "mon",
+        "tue",
+        "wed",
+        "thu",
+        "fri",
+        "sat",
+        "sun",
     }
+)
+
+
+def _validated_day(value: Any) -> str:
+    s = cv.string(value).strip().lower()
+    if s not in _VALID_DAYS:
+        raise vol.Invalid(
+            f"unknown day {value!r}; expected one of "
+            "monday/tuesday/.../sunday or mon/tue/.../sun"
+        )
+    return s
+
+
+def _slot_has_start_and_end(slot: dict[str, Any]) -> dict[str, Any]:
+    """Reject slots that omit both ``start``/``startTime`` or both ``end``/``endTime``.
+
+    The cloud DTO requires both ends. Without this guard the failure surfaces
+    only later, inside ``ScheduleSlot.to_dict()``, with a less clear message.
+    """
+    if "start" not in slot and "startTime" not in slot:
+        raise vol.Invalid("slot must have a start time (start or startTime)")
+    if "end" not in slot and "endTime" not in slot:
+        raise vol.Invalid("slot must have an end time (end or endTime)")
+    return slot
+
+
+SLOT_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Optional("start"): _normalize_hhmm,
+            vol.Optional("startTime"): _normalize_hhmm,
+            vol.Optional("end"): _normalize_hhmm,
+            vol.Optional("endTime"): _normalize_hhmm,
+            vol.Optional("days"): vol.All(cv.ensure_list, [_validated_day]),
+        }
+    ),
+    _slot_has_start_and_end,
 )
 
 SET_SCHEDULE_SCHEMA = vol.Schema(
@@ -252,12 +316,10 @@ async def _handle_remove_vehicle(hass: HomeAssistant, call: ServiceCall) -> None
         ) from err
     await coordinator.async_request_refresh()
 
-    # Drop any preferred_vehicle entries that pointed at the removed vehicle.
-    stale = [s for s, vid in coordinator.preferred_vehicle.items() if vid == vehicle_id]
-    if stale:
-        for s in stale:
-            coordinator.preferred_vehicle.pop(s, None)
-        await coordinator.async_save_preferences()
+    # Drop any preferred_vehicle entries that pointed at the removed vehicle,
+    # holding the coordinator's prefs lock for the entire mutate+save so the
+    # change can't interleave with a concurrent select-option update.
+    await coordinator.async_remove_preferred_vehicle_id(vehicle_id)
 
 
 async def _handle_import_session_history(

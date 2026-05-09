@@ -78,7 +78,14 @@
       "charge_session_active": { "name": "Charging" },
       "charging_paused": { "name": "Charging paused" },
       "error": { "name": "Error" },
-      "charging_disabled": { "name": "Charging disabled" },
+      "charging_disabled": {
+        "name": "Charging disabled",
+        "state_attributes": {
+          "reason": {
+            "name": "Disable reason"
+          }
+        }
+      },
       "charging_authorized": { "name": "Charging authorized" },
       "power_reduced_by_dso": { "name": "Power reduced by DSO" },
       "firmware_update_available": { "name": "Firmware update available" },
@@ -94,15 +101,36 @@
     },
     "switch": {
       "charging": { "name": "Charging" },
-      "ocpp_enabled": { "name": "OCPP enabled" }
+      "ocpp_enabled": {
+        "name": "OCPP enabled",
+        "state_attributes": {
+          "change_not_allowed_reason": {
+            "name": "Change not allowed reason"
+          }
+        }
+      }
     },
     "select": {
       "charge_mode": { "name": "Charge mode" },
       "active_vehicle": { "name": "Active vehicle" },
-      "cpms": { "name": "CPMS" }
+      "cpms": {
+        "name": "CPMS",
+        "state_attributes": {
+          "change_not_allowed_reason": {
+            "name": "Change not allowed reason"
+          }
+        }
+      }
     },
     "text": {
-      "charge_point_identifier": { "name": "Charge point identifier" }
+      "charge_point_identifier": {
+        "name": "Charge point identifier",
+        "state_attributes": {
+          "change_not_allowed_reason": {
+            "name": "Change not allowed reason"
+          }
+        }
+      }
     },
     "number": {
       "sun_on_delay_minutes": { "name": "Sun on delay" },
