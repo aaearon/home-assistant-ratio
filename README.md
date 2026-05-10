@@ -30,7 +30,7 @@ Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/
 
 Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
 
-Home Assistant will install `aioratio==0.8.0` from PyPI automatically; no extra Python deps to manage.
+Home Assistant will install `aioratio==0.9.0` from PyPI automatically; no extra Python deps to manage.
 
 ## Removing the Integration
 
@@ -229,7 +229,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
 +--------------------|-----+
                      v
               +---------------+
-              |   aioratio    |   <-- pinned: aioratio==0.8.0
+              |   aioratio    |   <-- pinned: aioratio==0.9.0
               |  (PyPI lib)   |
               +-------|-------+
                       v
@@ -256,6 +256,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
 - **Account-level services require a single config entry.** `add_vehicle`, `remove_vehicle`, and `import_session_history` raise an error if multiple Ratio config entries exist, since they operate on the account level and there is no device picker to disambiguate.
 - **Rate limiting**: The Ratio cloud API enforces rate limits. The integration handles 429 responses with automatic backoff, but aggressive polling or frequent command calls may trigger temporary throttling.
 - **DSO power reduction is read-only.** The `power_reduced_by_dso` binary sensor reflects whether the Distribution System Operator has reduced available power, but this cannot be controlled from HA — it is set by the DSO via the charger's smart grid interface.
+- **`import_session_history` rejects already-processed windows.** If `begin_time` predates the live coordinator's last successful poll for any charger, the service raises `ServiceValidationError`. This prevents non-monotonic energy statistics that would result from backfilling sessions earlier than the live baseline. Workaround: re-add the integration to reset the live baseline before backfilling.
 
 ## Diagnostics
 
@@ -298,7 +299,7 @@ logger:
 ```bash
 git clone https://github.com/aaearon/home-assistant-ratio
 cd home-assistant-ratio
-pip install pytest-homeassistant-custom-component aioratio==0.8.0 ruff mypy
+pip install pytest-homeassistant-custom-component aioratio==0.9.0 ruff mypy
 pytest
 ruff check custom_components tests   # lint
 ruff format custom_components tests  # format
