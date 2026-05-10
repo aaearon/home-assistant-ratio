@@ -176,7 +176,7 @@
       "message": "Charger reports stop not allowed (state={state})."
     },
     "backfill_overlap": {
-      "message": "Cannot backfill session history: begin_time {begin_time} predates the history-import baseline {baseline} for charger(s) {serials}. Backfilling earlier than the baseline would produce non-monotonic energy statistics."
+      "message": "Cannot backfill session history: begin_time {begin_time} predates the latest history-import baseline ({baseline}) across affected charger(s) {serials}. Per-charger baselines may differ; choose a begin_time after this latest baseline to satisfy all listed chargers and avoid non-monotonic energy statistics."
     }
   },
   "services": {
