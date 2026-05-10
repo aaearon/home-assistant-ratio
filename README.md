@@ -256,7 +256,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
 - **Account-level services require a single config entry.** `add_vehicle`, `remove_vehicle`, and `import_session_history` raise an error if multiple Ratio config entries exist, since they operate on the account level and there is no device picker to disambiguate.
 - **Rate limiting**: The Ratio cloud API enforces rate limits. The integration handles 429 responses with automatic backoff, but aggressive polling or frequent command calls may trigger temporary throttling.
 - **DSO power reduction is read-only.** The `power_reduced_by_dso` binary sensor reflects whether the Distribution System Operator has reduced available power, but this cannot be controlled from HA — it is set by the DSO via the charger's smart grid interface.
-- **`import_session_history` rejects already-processed windows.** If `begin_time` predates the live coordinator's last successful poll for any charger, the service raises `ServiceValidationError`. This prevents non-monotonic energy statistics that would result from backfilling sessions earlier than the live baseline. Workaround: re-add the integration to reset the live baseline before backfilling.
+- **`import_session_history` rejects already-processed windows.** If `begin_time` predates the history-import baseline (latest imported session timestamp, advanced by the live polling coordinator) for any charger, the service raises `ServiceValidationError`. This prevents non-monotonic energy statistics that would result from backfilling sessions earlier than the baseline. Workaround: re-add the integration to reset the baseline before backfilling.
 
 ## Diagnostics
 

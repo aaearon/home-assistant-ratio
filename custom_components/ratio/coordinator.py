@@ -538,7 +538,10 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                 translation_key="backfill_overlap",
                 translation_placeholders={
                     "serials": ", ".join(sorted(overlaps.keys())),
-                    "begin_time": str(begin_ts),
+                    "begin_time": dt_util.utc_from_timestamp(begin_ts).isoformat(),
+                    "baseline": dt_util.utc_from_timestamp(
+                        max(overlaps.values())
+                    ).isoformat(),
                 },
             )
 
