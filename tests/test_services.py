@@ -492,9 +492,7 @@ async def test_history_coordinator_async_import_window_rejects_overlap(
     end = datetime(2023, 12, 1, tzinfo=UTC)
 
     with (
-        patch.object(
-            history, "_fetch_all_pages", new=AsyncMock()
-        ) as mock_fetch,
+        patch.object(history, "_fetch_all_pages", new=AsyncMock()) as mock_fetch,
         patch(
             "custom_components.ratio.coordinator.async_import_sessions",
             new=AsyncMock(),
