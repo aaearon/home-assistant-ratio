@@ -30,7 +30,11 @@ from aioratio.models.diagnostics import ChargerDiagnostics
 from aioratio.models.history import Session
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -503,11 +507,11 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         ``_seen_ids``, ``_running_total``) — manual imports are intended to fill
         gaps without disturbing the running totals used by the live poll loop.
 
-        Note: if begin_time predates existing live-imported sessions, the
-        backfilled statistics will have sum=0 as their baseline and will not
-        be monotonically consistent with live-imported points. Use this service
-        for initial setup or gap-filling only; re-adding the integration resets
-        the live baseline cleanly.
+        Raises:
+            ServiceValidationError: if ``begin_time`` predates
+                ``_last_imported_end_time`` for any charger known to the main
+                coordinator. This prevents non-monotonic statistics from
+                backfilling earlier than the live baseline.
         """
 
         def _to_epoch(v: _datetime_type | int) -> int:
@@ -521,6 +525,25 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         serials: list[str] = []
         if self._main_coordinator.data is not None:
             serials = list(self._main_coordinator.data.chargers.keys())
+
+        overlaps = {
+            serial: last_end
+            for serial in serials
+            if (last_end := self._last_imported_end_time.get(serial, 0)) > 0
+            and begin_ts < last_end
+        }
+        if overlaps:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="backfill_overlap",
+                translation_placeholders={
+                    "serials": ", ".join(sorted(overlaps.keys())),
+                    "begin_time": dt_util.utc_from_timestamp(begin_ts).isoformat(),
+                    "baseline": dt_util.utc_from_timestamp(
+                        max(overlaps.values())
+                    ).isoformat(),
+                },
+            )
 
         imported: dict[str, int] = {}
         for serial in serials:

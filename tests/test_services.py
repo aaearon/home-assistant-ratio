@@ -461,6 +461,52 @@ async def test_history_coordinator_async_import_window(
 
 
 @pytest.mark.asyncio
+async def test_history_coordinator_async_import_window_rejects_overlap(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """async_import_window must raise before any work when begin_time predates baseline."""
+    from aioratio.models import ChargerOverview
+
+    entry = setup_integration
+    client = mock_ratio_client.return_value
+    history = entry.runtime_data.history_coordinator
+    coordinator = entry.runtime_data.coordinator
+
+    serial = "SN-OVERLAP"
+    # Seed the live baseline so begin_time below predates it.
+    history._last_imported_end_time = {serial: 1_700_000_000}
+
+    from custom_components.ratio.coordinator import RatioData
+
+    coordinator.async_set_updated_data(
+        RatioData(
+            chargers={serial: ChargerOverview.from_dict({"serialNumber": serial})}
+        )
+    )
+
+    client.session_history = AsyncMock()
+
+    begin = datetime(2023, 11, 1, tzinfo=UTC)  # epoch ~1_698_796_800, < baseline
+    end = datetime(2023, 12, 1, tzinfo=UTC)
+
+    with (
+        patch.object(history, "_fetch_all_pages", new=AsyncMock()) as mock_fetch,
+        patch(
+            "custom_components.ratio.coordinator.async_import_sessions",
+            new=AsyncMock(),
+        ) as mock_import,
+        pytest.raises(ServiceValidationError),
+    ):
+        await history.async_import_window(begin_time=begin, end_time=end)
+
+    mock_fetch.assert_not_called()
+    mock_import.assert_not_called()
+    client.session_history.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_start_charge_calls_client(
     hass: HomeAssistant,
     device_registry: dr.DeviceRegistry,

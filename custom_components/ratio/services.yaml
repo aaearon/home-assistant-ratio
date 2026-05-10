@@ -70,7 +70,12 @@ remove_vehicle:
 
 import_session_history:
   name: Import session history
-  description: Backfill external statistics from completed charge sessions in the chosen window.
+  description: >-
+    Backfill external statistics from completed charge sessions in the
+    chosen window. begin_time must not predate the history-import
+    baseline of any charger (the latest imported session timestamp,
+    advanced by the live polling coordinator); otherwise the call is
+    rejected to preserve monotonic energy statistics.
   fields:
     begin_time:
       name: Begin time
