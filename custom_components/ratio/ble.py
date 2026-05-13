@@ -55,12 +55,12 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
 
     def _needs_poll(
         self,
-        service_info: BluetoothServiceInfoBleak,
+        _service_info: BluetoothServiceInfoBleak,
         seconds_since_last_poll: float | None,
     ) -> bool:
         return seconds_since_last_poll is None or seconds_since_last_poll >= 45
 
-    async def _async_update(self, service_info: BluetoothServiceInfoBleak) -> BleSnapshot:
+    async def _async_update(self, _service_info: BluetoothServiceInfoBleak) -> BleSnapshot:
         device = async_ble_device_from_address(self.hass, self.address, connectable=True)
         if device is None:
             raise UpdateFailed("Device not found")

@@ -7,6 +7,7 @@ DEFAULT_SCAN_INTERVAL = 60  # seconds
 
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
+CONF_BLE_ENABLED_SERIALS = "ble_enabled_serials"
 
 SERVICE_START_CHARGE = "start_charge"
 SERVICE_STOP_CHARGE = "stop_charge"
