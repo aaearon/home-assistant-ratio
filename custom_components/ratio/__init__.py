@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from aioratio import JsonFileTokenStore, RatioClient
@@ -16,7 +16,8 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN, PLATFORMS
+from .ble import RatioBleCoordinator
+from .const import CONF_BLE_ADDRESSES, CONF_BLE_ENABLED_SERIALS, DOMAIN, PLATFORMS
 from .coordinator import RatioCoordinator, RatioHistoryCoordinator
 from .services import async_setup_services, async_unload_services
 
@@ -30,6 +31,7 @@ class RatioRuntimeData:
     client: RatioClient
     coordinator: RatioCoordinator
     history_coordinator: RatioHistoryCoordinator
+    ble_coordinators: dict[str, RatioBleCoordinator] = field(default_factory=dict)
 
 
 type RatioConfigEntry = ConfigEntry[RatioRuntimeData]
@@ -76,10 +78,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> boo
         history_coordinator = RatioHistoryCoordinator(hass, client, entry, coordinator)
         await history_coordinator.async_load()
 
+        # Wire up BLE coordinators for any serials the user has enabled.
+        ble_coordinators: dict[str, RatioBleCoordinator] = {}
+        ble_addresses: dict[str, str] = entry.options.get(CONF_BLE_ADDRESSES, {})
+        for serial in entry.options.get(CONF_BLE_ENABLED_SERIALS, []):
+            address = ble_addresses.get(serial)
+            if address is None:
+                _LOGGER.warning(
+                    "BLE address unknown for charger %s; skipping BLE setup", serial
+                )
+                continue
+            ble_coord = RatioBleCoordinator(
+                hass=hass,
+                logger=_LOGGER,
+                address=address,
+                serial=serial,
+            )
+            # async_start() subscribes to BT events; the returned cancel callback
+            # is registered with async_on_unload so cleanup is automatic.
+            entry.async_on_unload(ble_coord.async_start())
+            ble_coordinators[serial] = ble_coord
+
         entry.runtime_data = RatioRuntimeData(
             client=client,
             coordinator=coordinator,
             history_coordinator=history_coordinator,
+            ble_coordinators=ble_coordinators,
         )
 
         # Schedule the first history refresh as a background task — it may
@@ -91,11 +115,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> boo
         )
 
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+        # Reload the entry whenever options change so BLE coordinator list
+        # stays in sync with the user's choices.
+        entry.async_on_unload(entry.add_update_listener(_async_reload_on_options_change))
     except Exception:
         await client.__aexit__(None, None, None)
         raise
 
     return True
+
+
+async def _async_reload_on_options_change(
+    hass: HomeAssistant, entry: RatioConfigEntry
+) -> None:
+    """Reload the entry when options change (e.g. BLE serial list updated)."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> bool:
