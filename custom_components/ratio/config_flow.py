@@ -158,6 +158,10 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
         # Local name is "RATIO_<serial>" — the cloud-side serial keeps the
         # "P" prefix (e.g. "P00000000013428"), so only strip "RATIO_".
         serial = advert.local_name.removeprefix("RATIO_")
+        # Dedupe across rotating RPAs: every advertisement carries a new MAC,
+        # so without setting unique_id we'd create one flow per advertisement.
+        await self.async_set_unique_id(f"ratio_ble_{serial}")
+        self._abort_if_unique_id_configured()
         self._ble_serial = serial
         self._ble_address = discovery_info.address
 
