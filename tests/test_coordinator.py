@@ -465,3 +465,31 @@ async def test_cpms_options_refetched_after_10_minutes(
     freezer.tick(timedelta(minutes=11))
     await coord.async_refresh()  # 11 min later — should re-fetch
     assert client.cpms_options.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_cpms_backoff_not_started_on_rate_limit(
+    hass: HomeAssistant,
+) -> None:
+    """Regression: a RatioRateLimitError during gather must not consume the
+    CPMS 10-minute backoff window.
+
+    The bug: ``_cpms_last_fetch`` was set to ``now`` BEFORE ``asyncio.gather``
+    completed. A rate-limit in any branch of the gather raised UpdateFailed
+    but left the timestamp written, so the next ~10 successful polls skipped
+    CPMS refresh — silently freezing select.cpms options.
+    """
+    from aioratio.exceptions import RatioRateLimitError
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    client = _make_full_client()
+    # Force a rate limit so gather raises before CPMS results land.
+    client.diagnostics = AsyncMock(side_effect=RatioRateLimitError("429"))
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+
+    with pytest.raises(UpdateFailed, match="rate limited"):
+        await coord._async_update_data()
+
+    # The CPMS backoff timestamp must not have been written.
+    assert coord._cpms_last_fetch is None
