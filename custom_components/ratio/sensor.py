@@ -25,6 +25,9 @@ from homeassistant.const import (
     UnitOfPower,
     UnitOfTime,
 )
+from homeassistant.components.bluetooth.passive_update_coordinator import (
+    PassiveBluetoothCoordinatorEntity,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -617,7 +620,9 @@ class RatioLastSessionSensor(CoordinatorEntity[RatioHistoryCoordinator], SensorE
             return None
 
 
-class RatioBleSensor(CoordinatorEntity[RatioBleCoordinator], SensorEntity):
+class RatioBleSensor(
+    PassiveBluetoothCoordinatorEntity[RatioBleCoordinator], SensorEntity
+):
     """Sensor reading per-phase voltage/current from BLE polling."""
 
     entity_description: RatioBleSensorEntityDescription

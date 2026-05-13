@@ -209,7 +209,10 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
             self.hass.async_create_task(
                 self.hass.config_entries.async_reload(self._cloud_entry_id)
             )
-            return self.async_abort(reason="ble_configured")
+            return self.async_abort(
+                reason="ble_configured",
+                description_placeholders={"serial": self._ble_serial},
+            )
 
         return self.async_show_form(
             step_id="bluetooth_confirm",
