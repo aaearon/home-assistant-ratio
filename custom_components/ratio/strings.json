@@ -209,6 +209,15 @@
     },
     "backfill_overlap": {
       "message": "Cannot backfill session history: begin_time {begin_time} predates the latest history-import baseline ({baseline}) across affected charger(s) {serials}. Per-charger baselines may differ; choose a begin_time after this latest baseline to satisfy all listed chargers and avoid non-monotonic energy statistics."
+    },
+    "ble_not_enabled": {
+      "message": "Bluetooth is not enabled for charger {serial}."
+    },
+    "ssid_not_found": {
+      "message": "SSID '{ssid}' was not found in the Wi-Fi scan results."
+    },
+    "ble_connect_failed": {
+      "message": "Could not connect to charger {serial} via Bluetooth: {error}"
     }
   },
   "services": {
@@ -245,6 +254,15 @@
       "fields": {
         "begin_time": { "name": "Begin time", "description": "Start of the window to import." },
         "end_time": { "name": "End time", "description": "Optional end of the window. Defaults to now." }
+      }
+    },
+    "reconfigure_wifi": {
+      "name": "Reconfigure Wi-Fi",
+      "description": "Reconnect the Ratio charger to a different Wi-Fi network via Bluetooth.",
+      "fields": {
+        "device_id": { "name": "Device", "description": "The Ratio charger to reconfigure." },
+        "ssid": { "name": "SSID", "description": "The Wi-Fi network name (SSID) to connect to." },
+        "password": { "name": "Password", "description": "The Wi-Fi password (leave empty for open networks)." }
       }
     }
   }

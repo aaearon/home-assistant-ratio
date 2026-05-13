@@ -89,3 +89,22 @@ import_session_history:
       required: false
       selector:
         datetime:
+
+reconfigure_wifi:
+  name: Reconfigure Wi-Fi
+  description: Reconnect the Ratio charger to a different Wi-Fi network via Bluetooth.
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: ratio
+    ssid:
+      required: true
+      selector:
+        text:
+    password:
+      required: false
+      selector:
+        text:
+          type: password

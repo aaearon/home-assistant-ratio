@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -52,6 +53,7 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             connectable=True,
         )
         self.serial = serial
+        self._wifi_lock: asyncio.Lock = asyncio.Lock()
 
     def _needs_poll(
         self,
