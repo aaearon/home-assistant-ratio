@@ -149,6 +149,8 @@ The integration uses the `cloud_polling` IoT class — cloud communication is al
 
 ## Bluetooth (optional)
 
+> **Status:** BLE is shipped in 0.10.0 with the cloud path fully covered by tests, but **end-to-end validation on real hardware is still pending community reports**. The discovery/config-flow path has been smoke-tested; the GATT poll path against a live charger has not been fully verified by the maintainer. If you try it, please [open an issue](https://github.com/aaearon/home-assistant-ratio/issues) with what worked and what didn't.
+
 The Ratio charger exposes a BLE GATT service (Inspiro IPC) that the official mobile app uses alongside the cloud. When a Bluetooth adapter is in range you can enable BLE per charger to unlock:
 
 - **Per-phase voltage and current sensors** — not available from the cloud API at all.
