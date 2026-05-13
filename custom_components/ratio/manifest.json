@@ -11,7 +11,7 @@
   "issue_tracker": "https://github.com/aaearon/home-assistant-ratio/issues",
   "requirements": ["aioratio[ble]==0.10.0"],
   "bluetooth": [
-    {"local_name": "RATIO_P*", "manufacturer_id": 3071, "connectable": true}
+    {"local_name": "RATIO_*", "manufacturer_id": 3071, "connectable": true}
   ],
   "version": "0.10.0"
 }

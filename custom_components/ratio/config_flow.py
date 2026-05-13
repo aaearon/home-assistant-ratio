@@ -155,8 +155,9 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
         if advert is None:
             return self.async_abort(reason="not_supported")
 
-        # Local name is "RATIO_P<serial>" — strip the "RATIO_P" prefix.
-        serial = advert.local_name.removeprefix("RATIO_P")
+        # Local name is "RATIO_<serial>" — the cloud-side serial keeps the
+        # "P" prefix (e.g. "P00000000013428"), so only strip "RATIO_".
+        serial = advert.local_name.removeprefix("RATIO_")
         self._ble_serial = serial
         self._ble_address = discovery_info.address
 

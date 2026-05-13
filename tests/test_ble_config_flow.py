@@ -23,7 +23,7 @@ def _make_service_info(name: str, address: str = "AA:BB:CC:DD:EE:FF") -> MagicMo
 
 def _make_cloud_entry(
     hass: HomeAssistant,
-    serial: str | None = "12345678901234",
+    serial: str | None = "P12345678901234",
     ble_serials: list[str] | None = None,
 ) -> MockConfigEntry:
     """Create a MockConfigEntry with coordinator.data.chargers populated."""
@@ -77,7 +77,7 @@ async def test_bluetooth_step_aborts_cloud_account_required(
     service_info = _make_service_info("RATIO_P99999999999999", "AA:BB:CC:DD:EE:FF")
 
     # Entry exists but for a different serial.
-    _make_cloud_entry(hass, serial="12345678901234")
+    _make_cloud_entry(hass, serial="P12345678901234")
 
     with patch(
         "custom_components.ratio.config_flow.parse_ble_service_info",
@@ -100,15 +100,15 @@ async def test_bluetooth_step_aborts_already_configured(hass: HomeAssistant) -> 
     """Serial already in ble_enabled_serials → already_configured."""
     from aioratio.ble.discovery import RatioAdvertisement
 
-    serial = "12345678901234"
-    service_info = _make_service_info(f"RATIO_P{serial}", "AA:BB:CC:DD:EE:FF")
+    serial = "P12345678901234"
+    service_info = _make_service_info(f"RATIO_{serial}", "AA:BB:CC:DD:EE:FF")
 
     _make_cloud_entry(hass, serial=serial, ble_serials=[serial])
 
     with patch(
         "custom_components.ratio.config_flow.parse_ble_service_info",
         return_value=RatioAdvertisement(
-            local_name=f"RATIO_P{serial}", manufacturer_byte=3
+            local_name=f"RATIO_{serial}", manufacturer_byte=3
         ),
     ):
         result = await hass.config_entries.flow.async_init(
@@ -126,16 +126,16 @@ async def test_bluetooth_confirm_enables_ble(hass: HomeAssistant) -> None:
     """Confirming BLE adds the serial to options and schedules a reload."""
     from aioratio.ble.discovery import RatioAdvertisement
 
-    serial = "12345678901234"
+    serial = "P12345678901234"
     address = "AA:BB:CC:DD:EE:FF"
-    service_info = _make_service_info(f"RATIO_P{serial}", address)
+    service_info = _make_service_info(f"RATIO_{serial}", address)
 
     cloud_entry = _make_cloud_entry(hass, serial=serial, ble_serials=[])
 
     with patch(
         "custom_components.ratio.config_flow.parse_ble_service_info",
         return_value=RatioAdvertisement(
-            local_name=f"RATIO_P{serial}", manufacturer_byte=3
+            local_name=f"RATIO_{serial}", manufacturer_byte=3
         ),
     ):
         result = await hass.config_entries.flow.async_init(
