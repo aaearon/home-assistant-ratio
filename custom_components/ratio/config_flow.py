@@ -4,17 +4,26 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from aioratio import MemoryTokenStore, RatioClient
+from aioratio.ble import parse_service_info as parse_ble_service_info
 from aioratio.exceptions import RatioAuthError, RatioConnectionError, RatioError
-from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    OptionsFlow,
+)
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN
+from .const import CONF_BLE_ADDRESSES, CONF_BLE_ENABLED_SERIALS, DOMAIN
+
+if TYPE_CHECKING:
+    from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,6 +56,15 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def __init__(self) -> None:
         self._reauth_entry: ConfigEntry | None = None
+        self._ble_serial: str | None = None
+        self._ble_address: str | None = None
+        self._cloud_entry_id: str | None = None
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> RatioOptionsFlow:
+        """Return the options flow handler."""
+        return RatioOptionsFlow()
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -129,6 +147,78 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
+    async def async_step_bluetooth(
+        self, discovery_info: BluetoothServiceInfoBleak
+    ) -> ConfigFlowResult:
+        """Handle a Bluetooth discovery."""
+        advert = parse_ble_service_info(discovery_info)
+        if advert is None:
+            return self.async_abort(reason="not_supported")
+
+        # Local name is "RATIO_<serial>" — the cloud-side serial keeps the
+        # "P" prefix (e.g. "P00000000013428"), so only strip "RATIO_".
+        serial = advert.local_name.removeprefix("RATIO_")
+        # Dedupe across rotating RPAs: every advertisement carries a new MAC,
+        # so without setting unique_id we'd create one flow per advertisement.
+        await self.async_set_unique_id(f"ratio_ble_{serial}")
+        self._abort_if_unique_id_configured()
+        self._ble_serial = serial
+        self._ble_address = discovery_info.address
+
+        # Find a loaded cloud entry that knows about this charger.
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            if not hasattr(entry, "runtime_data"):
+                continue
+            try:
+                chargers = entry.runtime_data.coordinator.data.chargers
+            except AttributeError:
+                continue
+            if chargers and serial in chargers:
+                self._cloud_entry_id = entry.entry_id
+                break
+        else:
+            return self.async_abort(reason="cloud_account_required")
+
+        if serial in entry.options.get(CONF_BLE_ENABLED_SERIALS, []):
+            return self.async_abort(reason="already_configured")
+
+        self.context["title_placeholders"] = {"name": f"Ratio Charger {serial}"}
+        return await self.async_step_bluetooth_confirm()
+
+    async def async_step_bluetooth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirm enabling Bluetooth for the discovered charger."""
+        if user_input is not None:
+            entry = self.hass.config_entries.async_get_entry(self._cloud_entry_id)
+            existing = list(entry.options.get(CONF_BLE_ENABLED_SERIALS, []))
+            if self._ble_serial not in existing:
+                existing.append(self._ble_serial)
+            updated_addresses = {
+                **entry.options.get(CONF_BLE_ADDRESSES, {}),
+                self._ble_serial: self._ble_address,
+            }
+            self.hass.config_entries.async_update_entry(
+                entry,
+                options={
+                    **entry.options,
+                    CONF_BLE_ENABLED_SERIALS: existing,
+                    CONF_BLE_ADDRESSES: updated_addresses,
+                },
+            )
+            self.hass.async_create_task(
+                self.hass.config_entries.async_reload(self._cloud_entry_id)
+            )
+            return self.async_abort(
+                reason="ble_configured",
+                description_placeholders={"serial": self._ble_serial},
+            )
+
+        return self.async_show_form(
+            step_id="bluetooth_confirm",
+            description_placeholders={"serial": self._ble_serial},
+        )
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -172,3 +262,38 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
             ),
             errors=errors,
         )
+
+
+class RatioOptionsFlow(OptionsFlow):
+    """Handle options for the Ratio integration (BLE charger management)."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage BLE-enabled chargers."""
+        serials: list[str] = list(
+            self.config_entry.options.get(CONF_BLE_ENABLED_SERIALS, [])
+        )
+
+        if not serials:
+            return self.async_abort(reason="no_ble_chargers")
+
+        if user_input is not None:
+            # Keep only serials the user left checked.
+            enabled = [s for s in serials if user_input.get(s, True)]
+            disabled = [s for s in serials if s not in enabled]
+            if disabled and hasattr(self.config_entry, "runtime_data"):
+                ble_coordinators = getattr(
+                    self.config_entry.runtime_data, "ble_coordinators", {}
+                )
+                for serial in disabled:
+                    if (coord := ble_coordinators.get(serial)) is not None:
+                        await coord.async_dismiss_bond_issue()
+            return self.async_create_entry(
+                data={**self.config_entry.options, CONF_BLE_ENABLED_SERIALS: enabled}
+            )
+
+        schema = vol.Schema(
+            {vol.Optional(serial, default=True): bool for serial in serials}
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)

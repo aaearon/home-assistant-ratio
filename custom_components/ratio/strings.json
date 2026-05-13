@@ -34,6 +34,10 @@
           "email": "The email address you use to sign in to the Ratio mobile app.",
           "password": "The password for your Ratio account."
         }
+      },
+      "bluetooth_confirm": {
+        "description": "Enable Bluetooth for Ratio charger {serial}? This allows per-phase voltage and current sensors and local Wi-Fi recovery. You must have already paired the charger with this device via Bluetooth settings.",
+        "title": "Ratio Charger Bluetooth"
       }
     },
     "error": {
@@ -44,7 +48,28 @@
     "abort": {
       "already_configured": "This Ratio account is already configured.",
       "reauth_successful": "Re-authentication successful.",
-      "account_mismatch": "The email address does not match the original account. To use a different account, remove and re-add the integration."
+      "account_mismatch": "The email address does not match the original account. To use a different account, remove and re-add the integration.",
+      "not_supported": "This device is not a Ratio EV charger.",
+      "cloud_account_required": "No Ratio cloud account is configured for this charger. Set up the Ratio integration first.",
+      "ble_configured": "Bluetooth enabled for charger {serial}. The integration will reload."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Bluetooth Settings",
+        "description": "Uncheck a charger to disable Bluetooth for it.",
+        "data": {}
+      }
+    },
+    "abort": {
+      "no_ble_chargers": "No Bluetooth-enabled chargers configured."
+    }
+  },
+  "issues": {
+    "ble_not_bonded": {
+      "title": "Ratio charger {serial} not bonded",
+      "description": "Home Assistant cannot connect to the Ratio charger via Bluetooth. Please pair the charger ({serial}) with this device using your operating system's Bluetooth settings, then re-enable Bluetooth in the integration options."
     }
   },
   "entity": {
@@ -71,7 +96,14 @@
       "connection_medium": { "name": "Connection medium" },
       "cpms_name": { "name": "CPMS name" },
       "cpms_url": { "name": "CPMS URL" },
-      "charge_point_identifier": { "name": "Charge point identifier" }
+      "charge_point_identifier": { "name": "Charge point identifier" },
+      "voltage_phase_1": { "name": "Voltage phase 1" },
+      "voltage_phase_2": { "name": "Voltage phase 2" },
+      "voltage_phase_3": { "name": "Voltage phase 3" },
+      "current_phase_1": { "name": "Current phase 1" },
+      "current_phase_2": { "name": "Current phase 2" },
+      "current_phase_3": { "name": "Current phase 3" },
+      "ble_protocol_version": { "name": "BLE protocol version" }
     },
     "binary_sensor": {
       "vehicle_connected": { "name": "Vehicle connected" },
@@ -177,6 +209,15 @@
     },
     "backfill_overlap": {
       "message": "Cannot backfill session history: begin_time {begin_time} predates the latest history-import baseline ({baseline}) across affected charger(s) {serials}. Per-charger baselines may differ; choose a begin_time after this latest baseline to satisfy all listed chargers and avoid non-monotonic energy statistics."
+    },
+    "ble_not_enabled": {
+      "message": "Bluetooth is not enabled for charger {serial}."
+    },
+    "ssid_not_found": {
+      "message": "SSID '{ssid}' was not found in the Wi-Fi scan results."
+    },
+    "ble_connect_failed": {
+      "message": "Could not connect to charger {serial} via Bluetooth: {error}"
     }
   },
   "services": {
@@ -213,6 +254,15 @@
       "fields": {
         "begin_time": { "name": "Begin time", "description": "Start of the window to import." },
         "end_time": { "name": "End time", "description": "Optional end of the window. Defaults to now." }
+      }
+    },
+    "reconfigure_wifi": {
+      "name": "Reconfigure Wi-Fi",
+      "description": "Reconnect the Ratio charger to a different Wi-Fi network via Bluetooth.",
+      "fields": {
+        "device_id": { "name": "Device", "description": "The Ratio charger to reconfigure." },
+        "ssid": { "name": "SSID", "description": "The Wi-Fi network name (SSID) to connect to." },
+        "password": { "name": "Password", "description": "The Wi-Fi password (leave empty for open networks)." }
       }
     }
   }

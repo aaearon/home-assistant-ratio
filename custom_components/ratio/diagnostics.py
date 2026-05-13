@@ -75,6 +75,22 @@ async def async_get_config_entry_diagnostics(
         if data
         else []
     )
+
+    ble_coordinators: dict[str, Any] = getattr(
+        entry.runtime_data, "ble_coordinators", {}
+    )
+    ble_section = async_redact_data(
+        {
+            serial: {
+                "address": ble_coord.address,
+                "last_poll_successful": ble_coord.last_poll_successful,
+                "available": ble_coord.available,
+            }
+            for serial, ble_coord in ble_coordinators.items()
+        },
+        TO_REDACT,
+    )
+
     return {
         "entry_data": async_redact_data(dict(entry.data), TO_REDACT),
         "coordinator_data": async_redact_data(
@@ -89,4 +105,5 @@ async def async_get_config_entry_diagnostics(
             },
             TO_REDACT,
         ),
+        "ble": ble_section,
     }

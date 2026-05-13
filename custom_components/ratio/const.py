@@ -7,6 +7,8 @@ DEFAULT_SCAN_INTERVAL = 60  # seconds
 
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
+CONF_BLE_ENABLED_SERIALS = "ble_enabled_serials"
+CONF_BLE_ADDRESSES = "ble_addresses"
 
 SERVICE_START_CHARGE = "start_charge"
 SERVICE_STOP_CHARGE = "stop_charge"
@@ -14,6 +16,7 @@ SERVICE_SET_SCHEDULE = "set_schedule"
 SERVICE_ADD_VEHICLE = "add_vehicle"
 SERVICE_REMOVE_VEHICLE = "remove_vehicle"
 SERVICE_IMPORT_SESSION_HISTORY = "import_session_history"
+SERVICE_RECONFIGURE_WIFI = "reconfigure_wifi"
 
 ATTR_CHARGER_ID = "charger_id"
 ATTR_VEHICLE_ID = "vehicle_id"

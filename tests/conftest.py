@@ -8,12 +8,27 @@ Requires ``pytest-homeassistant-custom-component``. Install with:
 from __future__ import annotations
 
 import pathlib
+import sys
 from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioratio.models.history import SessionHistoryPage
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+# pyserial and pyudev are not installed in the test venv but are transitive
+# imports required when homeassistant.components.bluetooth loads its usb
+# dependency.  Stubbing them at session start allows tests that patch the
+# bluetooth component to work without these packages installed.
+_serial_mock = MagicMock()
+for _mod in (
+    "serial",
+    "serial.tools",
+    "serial.tools.list_ports",
+    "serial.tools.list_ports_common",
+):
+    sys.modules.setdefault(_mod, _serial_mock)
+sys.modules.setdefault("pyudev", MagicMock())
 
 import custom_components
 from custom_components.ratio.const import DOMAIN
@@ -33,6 +48,23 @@ def auto_enable_custom_integrations(
     enable_custom_integrations: None,
 ) -> None:
     """Enable loading custom integrations in every test."""
+
+
+@pytest.fixture(autouse=True)
+def mock_bluetooth_setup() -> Generator[None, None, None]:
+    """Prevent the bluetooth integration from opening hardware sockets in tests.
+
+    The ratio manifest declares ``dependencies: ["bluetooth"]`` so HA tries to
+    set up the bluetooth component before every integration test.  Without this
+    stub, habluetooth attempts to open an AF_BLUETOOTH raw socket which is
+    blocked by pytest-socket and causes every test that actually sets up the
+    integration to fail.
+    """
+    with patch(
+        "homeassistant.components.bluetooth.async_setup",
+        AsyncMock(return_value=True),
+    ):
+        yield
 
 
 def _make_client_instance() -> MagicMock:

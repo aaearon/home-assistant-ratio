@@ -7,13 +7,15 @@ import re
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
-from aioratio import RatioClient
+from aioratio import BleClient, RatioClient
 from aioratio.exceptions import (
     RatioApiError,
+    RatioBleConnectionError,
     RatioConnectionError,
     RatioRateLimitError,
 )
 from aioratio.models import ChargeSchedule, ScheduleSlot, Vehicle
+from homeassistant.components.bluetooth.api import async_ble_device_from_address
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -34,6 +36,7 @@ from .const import (
     DOMAIN,
     SERVICE_ADD_VEHICLE,
     SERVICE_IMPORT_SESSION_HISTORY,
+    SERVICE_RECONFIGURE_WIFI,
     SERVICE_REMOVE_VEHICLE,
     SERVICE_SET_SCHEDULE,
     SERVICE_START_CHARGE,
@@ -156,6 +159,14 @@ IMPORT_SESSION_HISTORY_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_BEGIN_TIME): cv.datetime,
         vol.Optional(ATTR_END_TIME): cv.datetime,
+    }
+)
+
+RECONFIGURE_WIFI_SCHEMA = vol.Schema(
+    {
+        vol.Required("device_id"): cv.string,
+        vol.Required("ssid"): cv.string,
+        vol.Optional("password"): cv.string,
     }
 )
 
@@ -372,6 +383,68 @@ async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
         await coordinator.request_command(client.set_charge_schedule, serial, schedule)
 
 
+async def _handle_reconfigure_wifi(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Reconnect a Ratio charger to a Wi-Fi network via BLE."""
+    pairs = _resolve_serials(hass, call)
+    entry_id, serial = pairs[0]
+
+    entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="config_entry_not_found",
+            translation_placeholders={"entry_id": entry_id},
+        )
+
+    ble_coordinators: dict[str, Any] = getattr(
+        entry.runtime_data, "ble_coordinators", {}
+    )
+    coordinator = ble_coordinators.get(serial)
+    if coordinator is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="ble_not_enabled",
+            translation_placeholders={"serial": serial},
+        )
+
+    ssid: str = call.data["ssid"]
+    # Empty string is passed for open networks. Note: aioratio emits a
+    # RuntimeWarning when password is not None (including ""), so callers on
+    # open networks should omit the field entirely; "" is the safe fallback here.
+    password: str = call.data.get("password") or ""
+
+    ble_device = async_ble_device_from_address(hass, coordinator.address, connectable=True)
+    if ble_device is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="ble_connect_failed",
+            translation_placeholders={"serial": serial, "error": "device not found"},
+        )
+
+    try:
+        async with coordinator._wifi_lock:
+            client = BleClient(ble_device)
+            try:
+                async with client:
+                    scan_results = await client.wifi_scan()
+                    found_ssids = {ap.ssid for ap in scan_results}
+                    if ssid not in found_ssids:
+                        raise ServiceValidationError(
+                            translation_domain=DOMAIN,
+                            translation_key="ssid_not_found",
+                            translation_placeholders={"ssid": ssid},
+                        )
+                    await client.wifi_connect(ssid, password)
+            except ServiceValidationError:
+                raise
+    except RatioBleConnectionError as err:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="ble_connect_failed",
+            translation_placeholders={"serial": serial, "error": str(err)},
+        ) from err
+
+
 async def async_setup_services(hass: HomeAssistant) -> None:
     """Register Ratio services (idempotent)."""
     if hass.services.has_service(DOMAIN, SERVICE_START_CHARGE):
@@ -405,6 +478,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def import_session_history(call: ServiceCall) -> ServiceResponse:
         return await _handle_import_session_history(hass, call)
 
+    async def reconfigure_wifi(call: ServiceCall) -> None:
+        await _handle_reconfigure_wifi(hass, call)
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_ADD_VEHICLE,
@@ -425,6 +501,12 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         schema=IMPORT_SESSION_HISTORY_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RECONFIGURE_WIFI,
+        reconfigure_wifi,
+        schema=RECONFIGURE_WIFI_SCHEMA,
+    )
 
 
 async def async_unload_services(hass: HomeAssistant) -> None:
@@ -436,6 +518,7 @@ async def async_unload_services(hass: HomeAssistant) -> None:
         SERVICE_ADD_VEHICLE,
         SERVICE_REMOVE_VEHICLE,
         SERVICE_IMPORT_SESSION_HISTORY,
+        SERVICE_RECONFIGURE_WIFI,
     ):
         if hass.services.has_service(DOMAIN, svc):
             hass.services.async_remove(DOMAIN, svc)
