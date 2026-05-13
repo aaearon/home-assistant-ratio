@@ -272,3 +272,200 @@ async def test_pagination_terminates_on_empty_string_next_token(
 
     # Exactly one call — empty-string token is treated as "no more pages".
     assert client.session_history.await_count == 1
+
+
+async def _seed_bad_state_storage(
+    hass: HomeAssistant,
+    entry: MockConfigEntry,
+    serial: str,
+    last_end_ts: int,
+    seen_id: str,
+    running_total: float,
+) -> None:
+    """Persist a 'sessions empty but seen_ids non-empty' state for ``serial``.
+
+    Mirrors the storage produced by older versions of the integration that
+    advanced bookkeeping but never persisted the session list.
+    """
+    from homeassistant.helpers.storage import Store  # noqa: PLC0415
+
+    from custom_components.ratio.const import STORAGE_VERSION  # noqa: PLC0415
+    from custom_components.ratio.coordinator import (  # noqa: PLC0415
+        STORAGE_KEY_HISTORY,
+    )
+
+    store: Store = Store(
+        hass,
+        STORAGE_VERSION,
+        f"{DOMAIN}.{entry.entry_id}.{STORAGE_KEY_HISTORY}",
+    )
+    await store.async_save(
+        {
+            "last_imported_end_time": {serial: last_end_ts},
+            "seen_ids": {serial: [seen_id]},
+            "running_total": {serial: running_total},
+            "sessions": {serial: []},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_recovery_on_first_refresh_when_seen_ids_but_no_sessions(
+    hass: HomeAssistant, freezer
+) -> None:
+    """Regression: storage from before session-persistence shipped left users
+    with ``seen_ids`` populated but ``sessions: []`` — every poll thereafter
+    fetched only the last hour, deduped to empty, and re-persisted empty.
+    ``last_session_*`` sensors were stuck on "unknown" forever.
+
+    Recovery runs once at the start of the first poll (background task, so
+    setup is not blocked): detect the bad state and do a one-shot wide fetch
+    that populates ``_persisted_sessions[serial]`` directly. Statistics
+    import is intentionally skipped — they already contribute to
+    ``running_total``.
+    """
+    freezer.move_to("2026-05-13T05:00:00+00:00")
+    now_ts = int(dt_util.utcnow().timestamp())
+
+    serial = "BAD_STATE"
+    entry = _make_entry(hass, entry_id="e_recovery")
+    main = _make_main_coordinator([serial])
+
+    last_end_ts = now_ts - 7200
+    await _seed_bad_state_storage(hass, entry, serial, last_end_ts, "237", 12000.0)
+
+    s_old = _session("237", serial, now_ts - 86400, energy=12000)
+    client = MagicMock()
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s_old], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    # async_load is storage-only — no network call yet.
+    await coord.async_load()
+    assert client.session_history.await_count == 0
+
+    with _patch_import() as mock_import:
+        await coord.async_config_entry_first_refresh()
+
+        # Recovery must have populated _persisted_sessions directly.
+        assert serial in coord._persisted_sessions
+        assert [s.session_id for s in coord._persisted_sessions[serial]] == ["237"]
+        # Statistics MUST NOT be re-imported — running_total already accounts.
+        assert mock_import.await_count == 0
+
+    # First call: wide recovery fetch. Second call: the normal 1-hour-overlap
+    # poll inside _async_update_data.
+    assert client.session_history.await_count == 2
+    recovery_call = client.session_history.await_args_list[0]
+    assert (
+        recovery_call.kwargs["begin_time"] <= now_ts - HISTORY_BACKFILL_DAYS * 86400 + 5
+    )
+
+    # Bookkeeping must be untouched by recovery.
+    assert coord._running_total[serial] == 12000.0
+    assert coord._seen_ids[serial] == ["237"]
+
+    # Subsequent polls must not retry recovery.
+    client.session_history.reset_mock()
+    client.session_history.return_value = SessionHistoryPage(
+        sessions=[], next_token=None
+    )
+    await coord.async_refresh()
+    # Only the normal poll — no second recovery fetch.
+    assert client.session_history.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_recovery_skipped_for_stale_seen_ids_serial(hass: HomeAssistant) -> None:
+    """A ``seen_ids`` entry for a charger no longer in the user's account
+    must not trigger a cloud fetch."""
+    stale_serial = "REMOVED"
+    active_serial = "ACTIVE"
+    entry = _make_entry(hass, entry_id="e_recovery_stale")
+    main = _make_main_coordinator([active_serial])  # stale_serial not included
+
+    await _seed_bad_state_storage(
+        hass, entry, stale_serial, 1_700_000_000, "old", 1000.0
+    )
+
+    client = MagicMock()
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+    await coord.async_load()
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+
+    # No history call for the removed charger — only for the active one.
+    called_serials = [
+        c.kwargs.get("serial_number") for c in client.session_history.await_args_list
+    ]
+    assert stale_serial not in called_serials
+    assert active_serial in called_serials
+
+
+@pytest.mark.asyncio
+async def test_recovery_skipped_when_sessions_already_persisted(
+    hass: HomeAssistant,
+) -> None:
+    """No recovery fetch when persisted sessions exist."""
+    serial = "GOOD_STATE"
+    entry = _make_entry(hass, entry_id="e_recovery_skip")
+    main = _make_main_coordinator([serial])
+
+    # Seed via a normal first refresh so the storage has populated sessions.
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    seed_client = MagicMock()
+    seed_client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    seed_coord = RatioHistoryCoordinator(hass, seed_client, entry, main)
+    with _patch_import():
+        await seed_coord.async_config_entry_first_refresh()
+
+    # Fresh coordinator on the same entry: recovery branch must skip the
+    # wide-window fetch (persisted_sessions already populated). Only the
+    # normal 1-hour-overlap poll should hit the client.
+    client = MagicMock()
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+    await coord.async_load()
+    assert coord._persisted_sessions[serial][0].session_id == "id-1"
+
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+
+    # Exactly one call — the normal poll. No recovery wide fetch.
+    assert client.session_history.await_count == 1
+    call = client.session_history.await_args_list[0]
+    # Begin time is the 1-hour-overlap window, not a 30-day backfill.
+    assert call.kwargs["begin_time"] > 1_700_000_000 - HISTORY_BACKFILL_DAYS * 86400
+
+
+@pytest.mark.asyncio
+async def test_recovery_skipped_when_seen_ids_empty(hass: HomeAssistant) -> None:
+    """No recovery wide-fetch on a brand-new entry with no prior state.
+
+    The first refresh still does a single normal poll (the 30-day backfill
+    branch in ``_begin_time_for``), but recovery does not produce a second
+    fetch.
+    """
+    serial = "FRESH"
+    entry = _make_entry(hass, entry_id="e_recovery_fresh")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[], next_token=None)
+    )
+
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+
+    # Exactly one call — the normal first poll. Recovery skipped.
+    assert client.session_history.await_count == 1
+    assert coord._recovery_attempted is True

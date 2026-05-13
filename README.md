@@ -30,7 +30,7 @@ Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/
 
 Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
 
-Home Assistant will install `aioratio==0.9.0` from PyPI automatically; no extra Python deps to manage.
+Home Assistant will install `aioratio==0.9.1` from PyPI automatically; no extra Python deps to manage.
 
 ## Removing the Integration
 
@@ -72,7 +72,8 @@ One device per charger, with the following entities:
 | sensor (diagnostic, disabled by default) | `wifi_ip`, `ethernet_ip` | `diagnostics` endpoint — network status |
 | sensor (diagnostic, disabled by default) | `cpms_name`, `cpms_url` | `diagnostics` endpoint — OCPP status |
 | sensor (diagnostic) | `charge_point_identifier` | `installerOcpp` settings |
-| binary_sensor (diagnostic) | `wifi_connected`, `ethernet_connected`, `backend_connected`, `ocpp_connected`, `time_synchronized` | `diagnostics` endpoint — connectivity |
+| binary_sensor (diagnostic) | `wifi_connected`, `ethernet_connected`, `backend_connected`, `ocpp_connected` | `diagnostics` endpoint — connectivity |
+| binary_sensor (diagnostic, disabled by default) | `time_synchronized` | `diagnostics` endpoint — only reported by some firmwares |
 | switch (config) | `ocpp_enabled` | `installerOcpp` settings — `enabled` field |
 | select (config) | `cpms` | `installerOcpp` settings — CPMS selection from operator list |
 | text (config) | `charge_point_identifier` | `installerOcpp` settings — writable OCPP CPID |
@@ -229,7 +230,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
 +--------------------|-----+
                      v
               +---------------+
-              |   aioratio    |   <-- pinned: aioratio==0.9.0
+              |   aioratio    |   <-- pinned: aioratio==0.9.1
               |  (PyPI lib)   |
               +-------|-------+
                       v
@@ -299,7 +300,7 @@ logger:
 ```bash
 git clone https://github.com/aaearon/home-assistant-ratio
 cd home-assistant-ratio
-pip install pytest-homeassistant-custom-component aioratio==0.9.0 ruff mypy
+pip install pytest-homeassistant-custom-component aioratio==0.9.1 ruff mypy
 pytest
 ruff check custom_components tests   # lint
 ruff format custom_components tests  # format

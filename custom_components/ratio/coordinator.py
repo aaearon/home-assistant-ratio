@@ -224,13 +224,13 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
 
         # Refresh CPMS at most every 10 minutes regardless of how many
         # coordinator updates occur (command-triggered refreshes advance
-        # the old tick counter too quickly).
+        # the old tick counter too quickly). Only commit the timestamp once
+        # the gather has actually returned — a rate-limit (or any failure)
+        # mid-gather must not consume the backoff window.
         now = dt_util.utcnow()
         fetch_cpms = self._cpms_last_fetch is None or (
             now - self._cpms_last_fetch
         ) >= timedelta(minutes=10)
-        if fetch_cpms:
-            self._cpms_last_fetch = now
 
         try:
             (
@@ -252,6 +252,9 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
             )
         except RatioRateLimitError as err:
             raise UpdateFailed(f"rate limited; backing off: {err}") from err
+
+        if fetch_cpms:
+            self._cpms_last_fetch = now
 
         user_settings: dict[str, UserSettings] = {}
         for serial, settings in settings_results:
@@ -411,6 +414,9 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         # on first refresh after restart; this seeds the surface list).
         self._persisted_sessions: dict[str, list[Session]] = {}
         self._loaded = False
+        # One-shot recovery is deferred until the first poll (background task)
+        # so config-entry setup is not blocked by a cloud fetch.
+        self._recovery_attempted = False
 
     async def async_load(self) -> None:
         """Hydrate persisted pagination + dedup + running-total state from disk."""
@@ -449,6 +455,50 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                                 parsed.append(Session.from_dict(raw_s))
                     self._persisted_sessions[str(serial_key)] = parsed
         self._loaded = True
+
+    async def _recover_missing_sessions(self, serials: list[str]) -> None:
+        """One-shot backfill of the persisted-sessions cache after upgrade.
+
+        Older versions of the integration advanced ``_last_imported_end_time``
+        and populated ``_seen_ids`` but never persisted the surfaced
+        ``sessions`` list. After the persistence fix shipped, those users
+        ended up trapped: every poll fetched only the 1-hour overlap window,
+        dedup killed every result, and the empty list got re-persisted
+        forever — ``last_session_*`` sensors stuck on "unknown".
+
+        Detect the bad state (``seen_ids[serial]`` non-empty but
+        ``_persisted_sessions[serial]`` empty) and re-fetch with the full
+        backfill window to seed the cache. Statistics import is intentionally
+        skipped — the sessions already contributed to ``running_total`` in the
+        previous run, and re-importing would break monotonicity. Bookkeeping
+        (``_last_imported_end_time``, ``_seen_ids``, ``_running_total``) is
+        left untouched for the same reason.
+
+        Only serials present in ``serials`` (i.e. still in the user's account)
+        are considered; stale ``_seen_ids`` entries from removed chargers are
+        skipped to avoid unnecessary cloud calls.
+        """
+        now_ts = int(dt_util.utcnow().timestamp())
+        wide_begin = now_ts - HISTORY_BACKFILL_DAYS * 86400
+        for serial in serials:
+            if not self._seen_ids.get(serial):
+                continue
+            if self._persisted_sessions.get(serial):
+                continue
+            try:
+                fetched = await self._fetch_all_pages(serial, wide_begin)
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.warning("history recovery fetch failed for %s: %s", serial, err)
+                continue
+            if not fetched:
+                continue
+            recovered = sorted(fetched, key=_session_begin)
+            self._persisted_sessions[serial] = recovered[-HISTORY_PERSIST_SESSIONS:]
+            _LOGGER.info(
+                "history recovery: seeded %d session(s) for %s from cloud backfill",
+                len(self._persisted_sessions[serial]),
+                serial,
+            )
 
     async def _async_save(self, latest_result: dict[str, list[Session]]) -> None:
         sessions_to_persist: dict[str, list[dict[str, Any]]] = {
@@ -570,6 +620,13 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         serials: list[str] = []
         if self._main_coordinator.data is not None:
             serials = list(self._main_coordinator.data.chargers.keys())
+
+        # First-poll recovery for pre-v0.9.1 storage that has populated
+        # seen_ids but no persisted sessions. Runs here (not in async_load)
+        # so config-entry setup is not blocked by a cloud fetch.
+        if not self._recovery_attempted:
+            await self._recover_missing_sessions(serials)
+            self._recovery_attempted = True
 
         now_ts = int(dt_util.utcnow().timestamp())
         result: dict[str, list[Session]] = {}

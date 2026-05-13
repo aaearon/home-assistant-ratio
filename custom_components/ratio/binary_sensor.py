@@ -178,6 +178,10 @@ DIAGNOSTIC_BINARY_SENSOR_DESCRIPTIONS: tuple[
         translation_key="time_synchronized",
         name="Time synchronized",
         entity_category=EntityCategory.DIAGNOSTIC,
+        # The cloud diagnostics endpoint omits ``isTimeSynchronized`` on at
+        # least some charger firmwares (verified on a Solar charger). Disable
+        # by default; users on chargers that do report it can enable manually.
+        entity_registry_enabled_default=False,
         value_fn=lambda d: (
             d.network_status.is_time_synchronized if d.network_status else None
         ),
