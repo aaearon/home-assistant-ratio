@@ -20,7 +20,7 @@ from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_BLE_ENABLED_SERIALS, DOMAIN
+from .const import CONF_BLE_ADDRESSES, CONF_BLE_ENABLED_SERIALS, DOMAIN
 
 if TYPE_CHECKING:
     from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
@@ -189,9 +189,17 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
             existing = list(entry.options.get(CONF_BLE_ENABLED_SERIALS, []))
             if self._ble_serial not in existing:
                 existing.append(self._ble_serial)
+            updated_addresses = {
+                **entry.options.get(CONF_BLE_ADDRESSES, {}),
+                self._ble_serial: self._ble_address,
+            }
             self.hass.config_entries.async_update_entry(
                 entry,
-                options={**entry.options, CONF_BLE_ENABLED_SERIALS: existing},
+                options={
+                    **entry.options,
+                    CONF_BLE_ENABLED_SERIALS: existing,
+                    CONF_BLE_ADDRESSES: updated_addresses,
+                },
             )
             self.hass.async_create_task(
                 self.hass.config_entries.async_reload(self._cloud_entry_id)
@@ -265,6 +273,14 @@ class RatioOptionsFlow(OptionsFlow):
         if user_input is not None:
             # Keep only serials the user left checked.
             enabled = [s for s in serials if user_input.get(s, True)]
+            disabled = [s for s in serials if s not in enabled]
+            if disabled and hasattr(self.config_entry, "runtime_data"):
+                ble_coordinators = getattr(
+                    self.config_entry.runtime_data, "ble_coordinators", {}
+                )
+                for serial in disabled:
+                    if (coord := ble_coordinators.get(serial)) is not None:
+                        await coord.async_dismiss_bond_issue()
             return self.async_create_entry(
                 data={**self.config_entry.options, CONF_BLE_ENABLED_SERIALS: enabled}
             )
