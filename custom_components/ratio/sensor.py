@@ -19,6 +19,8 @@ from homeassistant.components.sensor import (
 from homeassistant.const import (
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     EntityCategory,
+    UnitOfElectricCurrent,
+    UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfPower,
     UnitOfTime,
@@ -29,6 +31,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import RatioConfigEntry
+from .ble import BleSnapshot, RatioBleCoordinator
 from .const import DOMAIN
 from .coordinator import RatioCoordinator, RatioHistoryCoordinator
 
@@ -331,6 +334,80 @@ LAST_SESSION_DESCRIPTIONS: tuple[RatioLastSessionSensorDescription, ...] = (
 )
 
 
+@dataclass(frozen=True, kw_only=True)
+class RatioBleSensorEntityDescription(SensorEntityDescription):
+    """Describes a BLE-only Ratio sensor backed by BleSnapshot."""
+
+    value_fn: Callable[[BleSnapshot], float | int | None]
+
+
+BLE_SENSOR_DESCRIPTIONS: tuple[RatioBleSensorEntityDescription, ...] = (
+    RatioBleSensorEntityDescription(
+        key="voltage_phase_1",
+        translation_key="voltage_phase_1",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snap: snap.voltage_phase_1,
+    ),
+    RatioBleSensorEntityDescription(
+        key="voltage_phase_2",
+        translation_key="voltage_phase_2",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snap: snap.voltage_phase_2,
+    ),
+    RatioBleSensorEntityDescription(
+        key="voltage_phase_3",
+        translation_key="voltage_phase_3",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        device_class=SensorDeviceClass.VOLTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snap: snap.voltage_phase_3,
+    ),
+    RatioBleSensorEntityDescription(
+        key="current_phase_1",
+        translation_key="current_phase_1",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snap: snap.current_phase_1,
+    ),
+    RatioBleSensorEntityDescription(
+        key="current_phase_2",
+        translation_key="current_phase_2",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snap: snap.current_phase_2,
+    ),
+    RatioBleSensorEntityDescription(
+        key="current_phase_3",
+        translation_key="current_phase_3",
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        device_class=SensorDeviceClass.CURRENT,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snap: snap.current_phase_3,
+    ),
+    RatioBleSensorEntityDescription(
+        key="ble_protocol_version",
+        translation_key="ble_protocol_version",
+        native_unit_of_measurement=None,
+        device_class=None,
+        state_class=None,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda snap: snap.protocol_version,
+    ),
+)
+
+
 def _build_sensor_entities(
     coordinator: RatioCoordinator, serial: str
 ) -> list[RatioSensor]:
@@ -378,6 +455,18 @@ async def async_setup_entry(
 
     _add_new()
     entry.async_on_unload(coordinator.async_add_listener(_add_new))
+
+    # BLE-only sensors — only created when BLE is enabled for this charger.
+    ble_coordinators: dict[str, RatioBleCoordinator] = getattr(
+        entry.runtime_data, "ble_coordinators", {}
+    )
+    ble_entities: list[SensorEntity] = [
+        RatioBleSensor(ble_coordinator, description)
+        for ble_coordinator in ble_coordinators.values()
+        for description in BLE_SENSOR_DESCRIPTIONS
+    ]
+    if ble_entities:
+        async_add_entities(ble_entities)
 
 
 class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
@@ -526,3 +615,28 @@ class RatioLastSessionSensor(CoordinatorEntity[RatioHistoryCoordinator], SensorE
             return self.entity_description.value_fn(session)
         except AttributeError:
             return None
+
+
+class RatioBleSensor(CoordinatorEntity[RatioBleCoordinator], SensorEntity):
+    """Sensor reading per-phase voltage/current from BLE polling."""
+
+    entity_description: RatioBleSensorEntityDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: RatioBleCoordinator,
+        description: RatioBleSensorEntityDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{coordinator.serial}_{description.key}"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, coordinator.serial)},
+        )
+
+    @property
+    def native_value(self) -> float | int | None:
+        if self.coordinator.data is None:
+            return None
+        return self.entity_description.value_fn(self.coordinator.data)

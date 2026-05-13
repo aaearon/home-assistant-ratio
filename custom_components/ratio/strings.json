@@ -96,7 +96,14 @@
       "connection_medium": { "name": "Connection medium" },
       "cpms_name": { "name": "CPMS name" },
       "cpms_url": { "name": "CPMS URL" },
-      "charge_point_identifier": { "name": "Charge point identifier" }
+      "charge_point_identifier": { "name": "Charge point identifier" },
+      "voltage_phase_1": { "name": "Voltage phase 1" },
+      "voltage_phase_2": { "name": "Voltage phase 2" },
+      "voltage_phase_3": { "name": "Voltage phase 3" },
+      "current_phase_1": { "name": "Current phase 1" },
+      "current_phase_2": { "name": "Current phase 2" },
+      "current_phase_3": { "name": "Current phase 3" },
+      "ble_protocol_version": { "name": "BLE protocol version" }
     },
     "binary_sensor": {
       "vehicle_connected": { "name": "Vehicle connected" },
