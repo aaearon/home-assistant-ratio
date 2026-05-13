@@ -414,6 +414,9 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         # on first refresh after restart; this seeds the surface list).
         self._persisted_sessions: dict[str, list[Session]] = {}
         self._loaded = False
+        # One-shot recovery is deferred until the first poll (background task)
+        # so config-entry setup is not blocked by a cloud fetch.
+        self._recovery_attempted = False
 
     async def async_load(self) -> None:
         """Hydrate persisted pagination + dedup + running-total state from disk."""
@@ -451,10 +454,9 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                             with contextlib.suppress(Exception):
                                 parsed.append(Session.from_dict(raw_s))
                     self._persisted_sessions[str(serial_key)] = parsed
-        await self._recover_missing_sessions()
         self._loaded = True
 
-    async def _recover_missing_sessions(self) -> None:
+    async def _recover_missing_sessions(self, serials: list[str]) -> None:
         """One-shot backfill of the persisted-sessions cache after upgrade.
 
         Older versions of the integration advanced ``_last_imported_end_time``
@@ -471,11 +473,15 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         previous run, and re-importing would break monotonicity. Bookkeeping
         (``_last_imported_end_time``, ``_seen_ids``, ``_running_total``) is
         left untouched for the same reason.
+
+        Only serials present in ``serials`` (i.e. still in the user's account)
+        are considered; stale ``_seen_ids`` entries from removed chargers are
+        skipped to avoid unnecessary cloud calls.
         """
         now_ts = int(dt_util.utcnow().timestamp())
         wide_begin = now_ts - HISTORY_BACKFILL_DAYS * 86400
-        for serial, ids in self._seen_ids.items():
-            if not ids:
+        for serial in serials:
+            if not self._seen_ids.get(serial):
                 continue
             if self._persisted_sessions.get(serial):
                 continue
@@ -614,6 +620,13 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         serials: list[str] = []
         if self._main_coordinator.data is not None:
             serials = list(self._main_coordinator.data.chargers.keys())
+
+        # First-poll recovery for pre-v0.9.1 storage that has populated
+        # seen_ids but no persisted sessions. Runs here (not in async_load)
+        # so config-entry setup is not blocked by a cloud fetch.
+        if not self._recovery_attempted:
+            await self._recover_missing_sessions(serials)
+            self._recovery_attempted = True
 
         now_ts = int(dt_util.utcnow().timestamp())
         result: dict[str, list[Session]] = {}
