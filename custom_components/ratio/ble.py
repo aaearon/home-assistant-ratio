@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from aioratio import BleClient
 from aioratio.exceptions import RatioBleConnectionError, RatioBleError, RatioBleNotBondedError
-from bleak import BleakError
+from bleak import BleakClient, BleakError
 from homeassistant.components.bluetooth import BluetoothScanningMode, BluetoothServiceInfoBleak
 from homeassistant.components.bluetooth.active_update_coordinator import (
     ActiveBluetoothDataUpdateCoordinator,
@@ -72,16 +72,22 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             async with client:
                 resp = await client.get_charger_sensor_values()
         except RatioBleNotBondedError:
-            async_create_issue(
-                self.hass,
-                DOMAIN,
-                f"ble_not_bonded_{self.serial}",
-                is_fixable=False,
-                severity=IssueSeverity.ERROR,
-                translation_key="ble_not_bonded",
-                translation_placeholders={"serial": self.serial},
-            )
-            raise UpdateFailed(f"Charger {self.serial} is not bonded")
+            # Try OS-level bonding once (Ember Mug pattern). BlueZ stores the
+            # bond so subsequent connections skip this branch entirely.
+            if await self._try_pair():
+                try:
+                    device = async_ble_device_from_address(
+                        self.hass, self.address, connectable=True
+                    )
+                    client = BleClient(device)
+                    async with client:
+                        resp = await client.get_charger_sensor_values()
+                except (RatioBleNotBondedError, RatioBleConnectionError, RatioBleError, BleakError) as e:
+                    self._fire_bond_issue()
+                    raise UpdateFailed(str(e)) from e
+            else:
+                self._fire_bond_issue()
+                raise UpdateFailed(f"Charger {self.serial} is not bonded and pairing failed")
         except (RatioBleConnectionError, RatioBleError) as e:
             raise UpdateFailed(str(e)) from e
         except BleakError as e:
@@ -97,6 +103,33 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             current_phase_3=resp.current_phase_3_amps,
             protocol_version=client.protocol_version,
         )
+
+    def _fire_bond_issue(self) -> None:
+        async_create_issue(
+            self.hass,
+            DOMAIN,
+            f"ble_not_bonded_{self.serial}",
+            is_fixable=False,
+            severity=IssueSeverity.ERROR,
+            translation_key="ble_not_bonded",
+            translation_placeholders={"serial": self.serial},
+        )
+
+    async def _try_pair(self) -> bool:
+        """Attempt OS-level bonding via bleak. Returns True if successful.
+
+        BlueZ persists the bond to disk; once bonded, the charger's ATT
+        authentication check passes and subsequent connections skip this path.
+        """
+        device = async_ble_device_from_address(self.hass, self.address, connectable=True)
+        if device is None:
+            return False
+        try:
+            async with BleakClient(device, timeout=15) as raw:
+                await raw.pair()
+            return True
+        except Exception:  # noqa: BLE001
+            return False
 
     async def async_dismiss_bond_issue(self) -> None:
         async_delete_issue(self.hass, DOMAIN, f"ble_not_bonded_{self.serial}")
