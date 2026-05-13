@@ -287,11 +287,12 @@ async def _seed_bad_state_storage(
     Mirrors the storage produced by older versions of the integration that
     advanced bookkeeping but never persisted the session list.
     """
+    from homeassistant.helpers.storage import Store  # noqa: PLC0415
+
     from custom_components.ratio.const import STORAGE_VERSION  # noqa: PLC0415
     from custom_components.ratio.coordinator import (  # noqa: PLC0415
         STORAGE_KEY_HISTORY,
     )
-    from homeassistant.helpers.storage import Store  # noqa: PLC0415
 
     store: Store = Store(
         hass,

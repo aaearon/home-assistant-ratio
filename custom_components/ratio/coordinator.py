@@ -482,9 +482,7 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
             try:
                 fetched = await self._fetch_all_pages(serial, wide_begin)
             except Exception as err:  # noqa: BLE001
-                _LOGGER.warning(
-                    "history recovery fetch failed for %s: %s", serial, err
-                )
+                _LOGGER.warning("history recovery fetch failed for %s: %s", serial, err)
                 continue
             if not fetched:
                 continue
