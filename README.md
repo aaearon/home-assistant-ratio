@@ -30,7 +30,7 @@ Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/
 
 Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
 
-Home Assistant will install `aioratio==0.9.1` from PyPI automatically; no extra Python deps to manage.
+Home Assistant will install `aioratio[ble]==0.10.0` from PyPI automatically; no extra Python deps to manage.
 
 ## Removing the Integration
 
@@ -74,6 +74,9 @@ One device per charger, with the following entities:
 | sensor (diagnostic) | `charge_point_identifier` | `installerOcpp` settings |
 | binary_sensor (diagnostic) | `wifi_connected`, `ethernet_connected`, `backend_connected`, `ocpp_connected` | `diagnostics` endpoint — connectivity |
 | binary_sensor (diagnostic, disabled by default) | `time_synchronized` | `diagnostics` endpoint — only reported by some firmwares |
+| sensor (diagnostic, BLE only) | `voltage_phase_1/2/3` (V) | BLE `GetChargerSensorValues` — only available when Bluetooth is enabled |
+| sensor (diagnostic, BLE only) | `current_phase_1/2/3` (A) | BLE `GetChargerSensorValues` — only available when Bluetooth is enabled |
+| sensor (diagnostic, BLE only) | `ble_protocol_version` | Inspiro IPC Version characteristic — only available when Bluetooth is enabled |
 | switch (config) | `ocpp_enabled` | `installerOcpp` settings — `enabled` field |
 | select (config) | `cpms` | `installerOcpp` settings — CPMS selection from operator list |
 | text (config) | `charge_point_identifier` | `installerOcpp` settings — writable OCPP CPID |
@@ -91,6 +94,7 @@ Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle,
 | `ratio.add_vehicle` | — | `vehicle_name`, `license_plate?` | `{vehicle_id}` |
 | `ratio.remove_vehicle` | — | `vehicle_id` | — |
 | `ratio.import_session_history` | — | `begin_time`, `end_time` | `{imported: {serial: count}}` |
+| `ratio.reconfigure_wifi` *(BLE only)* | `device_id` | `ssid`, `password?` | — |
 
 Target a specific charger via Home Assistant's device picker (`device_id`).
 
@@ -141,7 +145,49 @@ The integration uses two polling coordinators:
 
 After any command (start/stop charge, change settings), the main coordinator triggers an immediate refresh so entity states update without waiting for the next poll cycle.
 
-The integration uses the `cloud_polling` IoT class — there is no local network communication. All data flows through the Ratio cloud REST API.
+The integration uses the `cloud_polling` IoT class — cloud communication is always required. The optional Bluetooth path is supplementary (see below).
+
+## Bluetooth (optional)
+
+The Ratio charger exposes a BLE GATT service (Inspiro IPC) that the official mobile app uses alongside the cloud. When a Bluetooth adapter is in range you can enable BLE per charger to unlock:
+
+- **Per-phase voltage and current sensors** — not available from the cloud API at all.
+- **`ratio.reconfigure_wifi`** — reconnect the charger to a different Wi-Fi SSID without the app, useful if your home network changes.
+
+Cloud account setup is required first. BLE is additive — existing installations keep working with no changes.
+
+### Prerequisites
+
+- A Bluetooth adapter on the HA host (or an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy/) in range). Bonded connections via ESPHome proxy are not guaranteed to work — treat as best-effort and test with your hardware.
+- The charger must be **bonded** (OS-level pairing) with the HA host before Home Assistant can connect.
+
+### Bonding the charger (one-time)
+
+On the HA host, pair the charger via the OS Bluetooth tools. Example with `bluetoothctl` (Linux):
+
+```bash
+bluetoothctl
+scan on          # wait for RATIO_P<serial> to appear
+pair AA:BB:CC:DD:EE:FF
+trust AA:BB:CC:DD:EE:FF
+scan off
+```
+
+The charger advertises as `RATIO_P<serial>` (e.g. `RATIO_P00000000013428`). Use the stable identity address (shown after pairing), not the scan-time rotating MAC.
+
+### Enabling BLE in Home Assistant
+
+After pairing, HA will show a **"Discovered: Ratio Charger \<serial\>"** notification under **Settings → Devices & Services**. Click **Configure** and confirm to enable BLE for that charger. The integration reloads and the per-phase sensors appear within ~45 seconds.
+
+To disable BLE for a charger later: open the **Ratio EV Charging** integration, click **Configure**, and uncheck the charger.
+
+### One connection at a time
+
+The BLE protocol allows only one central to connect at a time. If you open the Ratio mobile app while HA is polling, the app preempts HA's GATT link. BLE entities will show **unavailable** until the app releases the connection and HA reconnects on the next poll (~45 s). This is expected behaviour.
+
+### Bond loss
+
+If the charger's bond is lost (e.g. after a factory reset or re-pairing from the phone), HA will create a **Repair issue** with instructions to re-bond. Re-bond the charger and then re-enable BLE via the options flow (which clears the issue).
 
 ## Automation Examples
 
@@ -251,7 +297,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
 
 ## Known limitations
 
-- **Sensor coverage is bounded by the cloud API.** Voltage, current, and session/total energy are not exposed by the upstream `chargers_overview` endpoint and therefore not available as sensors. `actual_charging_power` is reported in watts.
+- **Cloud sensor coverage is bounded by the API.** Per-phase voltage and current are not exposed by `chargers_overview` and are only available when [Bluetooth is enabled](#bluetooth-optional). `actual_charging_power` (W) is available from the cloud. Session/total energy is not exposed by the cloud API.
 - **`charge_mode` allowed values fall back to a hardcoded list** (`Smart`, `SmartSolar`, `PureSolar`) when the cloud omits `allowedValues`. If Ratio adds modes the fallback will need updating.
 - **Password storage**: stored in HA config entry data and persisted in `.storage/core.config_entries` like other config entry data. It does not use `secrets.yaml`, and protection relies on Home Assistant host security rather than separate encryption in this integration.
 - **Account-level services require a single config entry.** `add_vehicle`, `remove_vehicle`, and `import_session_history` raise an error if multiple Ratio config entries exist, since they operate on the account level and there is no device picker to disambiguate.
