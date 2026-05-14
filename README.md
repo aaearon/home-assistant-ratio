@@ -191,6 +191,27 @@ The BLE protocol allows only one central to connect at a time. If you open the R
 
 If the charger's bond is lost (e.g. after a factory reset or re-pairing from the phone), HA will create a **Repair issue** with instructions to re-bond. Re-bond the charger and then re-enable BLE via the options flow (which clears the issue).
 
+### Bluetooth proxies (ESPHome) — known caveats
+
+Connecting to the Ratio charger via an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy/) is **best-effort**. The charger requires an SMP-bonded GATT link before any sensor data is readable, and proxy-side pairing has constraints the integration cannot work around:
+
+- **ESPHome firmware version.** Active pairing through the proxy needs ESPHome **2024.6 or newer** with `bluetooth_proxy:` set to `active: true` (the PAIRING feature flag). Older firmware exposes `passive: true` only — the proxy can see advertisements but cannot initiate the pair RPC, and the integration will surface this as a `NotImplementedError` in the HA log.
+- **Bond persistence.** Bonds are stored in the proxy's NVS, not in HA. Re-flashing the ESPHome firmware or wiping the proxy's storage drops the bond, after which the integration will hit the same Repair issue and need to re-pair via the proxy.
+- **Diagnosing pairing failures.** Pairing attempts log the scanner backend, source, and a `proxy=True/False` flag — entry-point logs are at `DEBUG`, and any non-trivial failure (including `NotImplementedError` from an old proxy firmware) escalates to `WARNING`. If your BLE sensors stay unavailable, enable debug logging and share the relevant lines on [issue #27](https://github.com/aaearon/home-assistant-ratio/issues/27):
+
+  ```yaml
+  logger:
+    default: warning
+    logs:
+      custom_components.ratio: debug
+      aioratio.ble: debug
+      homeassistant.components.bluetooth: debug
+      bleak: debug
+      bleak_esphome: debug
+  ```
+
+If your proxy hardware doesn't support active pairing, the cloud path keeps working without BLE — disable BLE for that charger via **Configure** to clear the Repair issue.
+
 ## Automation Examples
 
 ### Start charging when electricity price is low

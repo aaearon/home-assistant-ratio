@@ -13,5 +13,5 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/aaearon/home-assistant-ratio/issues",
   "requirements": ["aioratio[ble]==0.10.1"],
-  "version": "0.10.1"
+  "version": "0.10.2"
 }
