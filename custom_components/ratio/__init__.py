@@ -118,7 +118,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> boo
 
         # Reload the entry whenever options change so BLE coordinator list
         # stays in sync with the user's choices.
-        entry.async_on_unload(entry.add_update_listener(_async_reload_on_options_change))
+        entry.async_on_unload(
+            entry.add_update_listener(_async_reload_on_options_change)
+        )
     except Exception:
         await client.__aexit__(None, None, None)
         raise

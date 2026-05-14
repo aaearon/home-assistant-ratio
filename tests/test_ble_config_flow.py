@@ -12,6 +12,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ratio.const import CONF_BLE_ENABLED_SERIALS, DOMAIN
 
+
 def _make_service_info(name: str, address: str = "AA:BB:CC:DD:EE:FF") -> MagicMock:
     """Build a minimal mock BluetoothServiceInfoBleak."""
     info = MagicMock()

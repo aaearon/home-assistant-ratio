@@ -30,8 +30,8 @@ for _mod in (
     sys.modules.setdefault(_mod, _serial_mock)
 sys.modules.setdefault("pyudev", MagicMock())
 
-import custom_components
-from custom_components.ratio.const import DOMAIN
+import custom_components  # noqa: E402
+from custom_components.ratio.const import DOMAIN  # noqa: E402
 
 # The editable install injects a PATH_PLACEHOLDER string into
 # custom_components.__path__ so namespace packages resolve correctly.

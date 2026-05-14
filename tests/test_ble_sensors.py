@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -14,7 +14,9 @@ from custom_components.ratio.sensor import (
 )
 
 
-def _make_ble_coordinator(serial: str = "S1", data: BleSnapshot | None = None) -> MagicMock:
+def _make_ble_coordinator(
+    serial: str = "S1", data: BleSnapshot | None = None
+) -> MagicMock:
     """Build a minimal mock RatioBleCoordinator."""
     coord = MagicMock()
     coord.serial = serial

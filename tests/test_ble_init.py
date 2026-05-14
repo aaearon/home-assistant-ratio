@@ -10,7 +10,11 @@ import pytest
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ratio.const import CONF_BLE_ADDRESSES, CONF_BLE_ENABLED_SERIALS, DOMAIN
+from custom_components.ratio.const import (
+    CONF_BLE_ADDRESSES,
+    CONF_BLE_ENABLED_SERIALS,
+    DOMAIN,
+)
 
 _ADDRESS = "AA:BB:CC:DD:EE:FF"
 _SERIAL = "S1"
@@ -34,13 +38,30 @@ def _enter_base_patches(stack: ExitStack, hass: HomeAssistant, client: MagicMock
     coord_instance.async_config_entry_first_refresh = AsyncMock()
     coord_instance.async_load_preferences = AsyncMock()
 
-    stack.enter_context(patch("custom_components.ratio.RatioClient", return_value=client))
-    stack.enter_context(patch("custom_components.ratio.async_setup_services", new_callable=AsyncMock))
-    stack.enter_context(patch("custom_components.ratio.RatioCoordinator", return_value=coord_instance))
-    stack.enter_context(patch("custom_components.ratio.RatioHistoryCoordinator", return_value=hist_instance))
-    stack.enter_context(patch("custom_components.ratio.async_get_clientsession", return_value=MagicMock()))
     stack.enter_context(
-        patch.object(hass.config_entries, "async_forward_entry_setups", new_callable=AsyncMock)
+        patch("custom_components.ratio.RatioClient", return_value=client)
+    )
+    stack.enter_context(
+        patch("custom_components.ratio.async_setup_services", new_callable=AsyncMock)
+    )
+    stack.enter_context(
+        patch("custom_components.ratio.RatioCoordinator", return_value=coord_instance)
+    )
+    stack.enter_context(
+        patch(
+            "custom_components.ratio.RatioHistoryCoordinator",
+            return_value=hist_instance,
+        )
+    )
+    stack.enter_context(
+        patch(
+            "custom_components.ratio.async_get_clientsession", return_value=MagicMock()
+        )
+    )
+    stack.enter_context(
+        patch.object(
+            hass.config_entries, "async_forward_entry_setups", new_callable=AsyncMock
+        )
     )
 
 
@@ -70,7 +91,10 @@ async def test_ble_coordinator_started_for_enabled_serial(
     with ExitStack() as stack:
         _enter_base_patches(stack, hass, client)
         mock_ble_cls = stack.enter_context(
-            patch("custom_components.ratio.RatioBleCoordinator", return_value=ble_coord_instance)
+            patch(
+                "custom_components.ratio.RatioBleCoordinator",
+                return_value=ble_coord_instance,
+            )
         )
         result = await async_setup_entry(hass, entry)
 

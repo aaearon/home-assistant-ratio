@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+
 # ---------------------------------------------------------------------------
 # Stub out pyserial before any HA bluetooth submodule is imported.
 # ---------------------------------------------------------------------------
@@ -43,7 +44,10 @@ _stub_serial()
 # Now we can safely import bluetooth-dependent HA modules.
 # ---------------------------------------------------------------------------
 from aioratio.ble.models.sensors import ChargerSensorValuesResponse  # noqa: E402
-from aioratio.exceptions import RatioBleConnectionError, RatioBleNotBondedError  # noqa: E402
+from aioratio.exceptions import (  # noqa: E402
+    RatioBleConnectionError,
+    RatioBleNotBondedError,
+)
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers.issue_registry import IssueSeverity  # noqa: E402
 from homeassistant.helpers.update_coordinator import UpdateFailed  # noqa: E402
@@ -82,13 +86,15 @@ def _make_service_info(address: str = "AA:BB:CC:DD:EE:FF") -> MagicMock:
     return info
 
 
-def _make_coordinator(hass: HomeAssistant) -> "RatioBleCoordinator":
+def _make_coordinator(hass: HomeAssistant) -> "RatioBleCoordinator":  # noqa: F821, UP037
     """Build a RatioBleCoordinator with the parent __init__ stubbed out."""
     import logging
-    from custom_components.ratio.ble import RatioBleCoordinator
+
     from homeassistant.components.bluetooth.active_update_coordinator import (
         ActiveBluetoothDataUpdateCoordinator,
     )
+
+    from custom_components.ratio.ble import RatioBleCoordinator
 
     def _fake_parent_init(self, *a, **kw) -> None:
         # Provide the minimal attributes the parent expects so methods work.
@@ -96,7 +102,9 @@ def _make_coordinator(hass: HomeAssistant) -> "RatioBleCoordinator":
         self.address = "AA:BB:CC:DD:EE:FF"
         self.logger = logging.getLogger(__name__)
 
-    with patch.object(ActiveBluetoothDataUpdateCoordinator, "__init__", _fake_parent_init):
+    with patch.object(
+        ActiveBluetoothDataUpdateCoordinator, "__init__", _fake_parent_init
+    ):
         coord = RatioBleCoordinator(
             hass=hass,
             logger=logging.getLogger(__name__),
@@ -159,9 +167,9 @@ async def test_bond_error_creates_repair_issue(hass: HomeAssistant) -> None:
         ),
         patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
         patch("custom_components.ratio.ble.async_create_issue") as mock_create_issue,
+        pytest.raises(UpdateFailed),
     ):
-        with pytest.raises(UpdateFailed):
-            await coord._async_update(service_info)
+        await coord._async_update(service_info)
 
     mock_create_issue.assert_called_once_with(
         hass,
@@ -194,9 +202,9 @@ async def test_connection_error_raises_update_failed(hass: HomeAssistant) -> Non
             return_value=ble_device,
         ),
         patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
+        pytest.raises(UpdateFailed),
     ):
-        with pytest.raises(UpdateFailed):
-            await coord._async_update(service_info)
+        await coord._async_update(service_info)
 
 
 @pytest.mark.asyncio

@@ -7,15 +7,27 @@ import logging
 from dataclasses import dataclass
 
 from aioratio import BleClient
-from aioratio.exceptions import RatioBleConnectionError, RatioBleError, RatioBleNotBondedError
-from bleak import BleakClient, BleakError
-from homeassistant.components.bluetooth import BluetoothScanningMode, BluetoothServiceInfoBleak
+from aioratio.exceptions import (
+    RatioBleConnectionError,
+    RatioBleError,
+    RatioBleNotBondedError,
+)
+from bleak import BleakClient
+from bleak.exc import BleakError
+from homeassistant.components.bluetooth import (
+    BluetoothScanningMode,
+    BluetoothServiceInfoBleak,
+)
 from homeassistant.components.bluetooth.active_update_coordinator import (
     ActiveBluetoothDataUpdateCoordinator,
 )
 from homeassistant.components.bluetooth.api import async_ble_device_from_address
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.issue_registry import IssueSeverity, async_create_issue, async_delete_issue
+from homeassistant.helpers.issue_registry import (
+    IssueSeverity,
+    async_create_issue,
+    async_delete_issue,
+)
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import DOMAIN
@@ -62,8 +74,12 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
     ) -> bool:
         return seconds_since_last_poll is None or seconds_since_last_poll >= 45
 
-    async def _async_update(self, _service_info: BluetoothServiceInfoBleak) -> BleSnapshot:
-        device = async_ble_device_from_address(self.hass, self.address, connectable=True)
+    async def _async_update(
+        self, _service_info: BluetoothServiceInfoBleak
+    ) -> BleSnapshot:
+        device = async_ble_device_from_address(
+            self.hass, self.address, connectable=True
+        )
         if device is None:
             raise UpdateFailed("Device not found")
 
@@ -82,12 +98,19 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
                     client = BleClient(device)
                     async with client:
                         resp = await client.get_charger_sensor_values()
-                except (RatioBleNotBondedError, RatioBleConnectionError, RatioBleError, BleakError) as e:
+                except (
+                    RatioBleNotBondedError,
+                    RatioBleConnectionError,
+                    RatioBleError,
+                    BleakError,
+                ) as e:
                     self._fire_bond_issue()
                     raise UpdateFailed(str(e)) from e
             else:
                 self._fire_bond_issue()
-                raise UpdateFailed(f"Charger {self.serial} is not bonded and pairing failed")
+                raise UpdateFailed(
+                    f"Charger {self.serial} is not bonded and pairing failed"
+                ) from None
         except (RatioBleConnectionError, RatioBleError) as e:
             raise UpdateFailed(str(e)) from e
         except BleakError as e:
@@ -121,7 +144,9 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         BlueZ persists the bond to disk; once bonded, the charger's ATT
         authentication check passes and subsequent connections skip this path.
         """
-        device = async_ble_device_from_address(self.hass, self.address, connectable=True)
+        device = async_ble_device_from_address(
+            self.hass, self.address, connectable=True
+        )
         if device is None:
             return False
         try:

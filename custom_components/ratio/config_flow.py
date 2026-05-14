@@ -189,8 +189,12 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Confirm enabling Bluetooth for the discovered charger."""
+        assert self._cloud_entry_id is not None
+        assert self._ble_serial is not None
+        assert self._ble_address is not None
         if user_input is not None:
             entry = self.hass.config_entries.async_get_entry(self._cloud_entry_id)
+            assert entry is not None
             existing = list(entry.options.get(CONF_BLE_ENABLED_SERIALS, []))
             if self._ble_serial not in existing:
                 existing.append(self._ble_serial)
