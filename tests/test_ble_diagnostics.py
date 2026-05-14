@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,17 +11,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ratio.const import CONF_BLE_ENABLED_SERIALS, DOMAIN
 from custom_components.ratio.diagnostics import async_get_config_entry_diagnostics
-
-
-def _r(result: object) -> dict[str, Any]:
-    """Cast a ``ConfigFlowResult`` TypedDict to ``dict[str, Any]`` for indexing.
-
-    Pyright marks every key in HA's ``ConfigFlowResult`` as ``NotRequired``,
-    so direct indexing trips ``reportTypedDictNotRequiredAccess`` everywhere
-    in test files. This helper centralizes the boundary cast.
-    """
-    return cast(dict[str, Any], result)
-
+from tests.conftest import _r
 
 SERIAL = "SN001"
 MAC = "AA:BB:CC:DD:EE:FF"

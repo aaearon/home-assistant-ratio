@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from contextlib import AbstractContextManager
 from unittest.mock import AsyncMock, MagicMock, patch
-
-if TYPE_CHECKING:
-    from unittest.mock import _patch
 
 import pytest
 from aioratio.models import ChargerOverview
@@ -54,7 +51,7 @@ def _make_main_coordinator(serials: list[str]) -> MagicMock:
     return main
 
 
-def _patch_import() -> _patch[AsyncMock]:
+def _patch_import() -> AbstractContextManager[AsyncMock]:
     """Return a patcher context for async_import_sessions.
 
     The mock returns ``starting_total + sum(session.total_charging_energy)`` so
