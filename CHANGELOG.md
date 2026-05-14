@@ -4,7 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-- Internal: tighten pyright surface to zero errors. Removed lazy `# type: ignore` suppressions in `number.py`, `services.py`, and `test_history_coordinator.py` by adopting structural fixes (literal-kwarg `dataclasses.replace`, widened `ServiceResponse` value, assert-then-use pattern). Entity property overrides remain `@property` (matching `CoordinatorEntity`'s dynamic semantics) with documented per-site `# pyright: ignore[reportIncompatibleVariableOverride]` suppressions to bridge the HA `Entity`/`CoordinatorEntity` base-class inconsistency. Test files using HA TypedDicts (`ConfigFlowResult`, `StatisticData`) use a small `_r`/`_sd` cast helper to satisfy `reportTypedDictNotRequiredAccess`.
+### Fixed
+
+- **Last-session sensors stuck on stale values after a long charging session ([#26](https://github.com/aaearon/home-assistant-ratio/issues/26)).** During a charge, repeated empty `session_history` polls advanced `_last_imported_end_time` to "now", shrinking the next poll's fetch window to the last hour. A session whose begin was more than `HISTORY_OVERLAP_SECONDS` (1 h) before unplug — typical for overnight charges — fell outside that window and was never imported. `_last_imported_end_time` is now anchored only to actual imported session ends, with a separate `_empty_poll_watermark` field handling the "how far back to look" optimization for chargers that haven't yet produced any completed session (so brand-new chargers don't repeat the full 30-day backfill on every poll). Existing affected installs are self-healed on next load: a drifted persisted cursor is clamped back to the latest persisted session end, so the next poll's overlap window catches the missed session(s) without requiring users to remove and re-add the integration.
+
+### Internal
+
+- Tighten pyright surface to zero errors. Removed lazy `# type: ignore` suppressions in `number.py`, `services.py`, and `test_history_coordinator.py` by adopting structural fixes (literal-kwarg `dataclasses.replace`, widened `ServiceResponse` value, assert-then-use pattern). Entity property overrides remain `@property` (matching `CoordinatorEntity`'s dynamic semantics) with documented per-site `# pyright: ignore[reportIncompatibleVariableOverride]` suppressions to bridge the HA `Entity`/`CoordinatorEntity` base-class inconsistency. Test files using HA TypedDicts (`ConfigFlowResult`, `StatisticData`) use a small `_r`/`_sd` cast helper to satisfy `reportTypedDictNotRequiredAccess`.
 
 ## [0.10.0] — 2026-05-13
 
