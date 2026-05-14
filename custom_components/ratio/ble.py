@@ -95,6 +95,11 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
                     device = async_ble_device_from_address(
                         self.hass, self.address, connectable=True
                     )
+                    if device is None:
+                        # Device went out of range between pairing and re-fetch.
+                        raise UpdateFailed(
+                            f"Charger {self.serial} not advertising after pairing"
+                        )
                     client = BleClient(device)
                     async with client:
                         resp = await client.get_charger_sensor_values()

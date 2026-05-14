@@ -11,10 +11,12 @@ from aioratio import BleClient, RatioClient
 from aioratio.exceptions import (
     RatioApiError,
     RatioBleConnectionError,
+    RatioBleError,
     RatioConnectionError,
     RatioRateLimitError,
 )
 from aioratio.models import ChargeSchedule, ScheduleSlot, Vehicle
+from bleak.exc import BleakError
 from homeassistant.components.bluetooth.api import async_ble_device_from_address
 from homeassistant.core import (
     HomeAssistant,
@@ -408,10 +410,10 @@ async def _handle_reconfigure_wifi(hass: HomeAssistant, call: ServiceCall) -> No
         )
 
     ssid: str = call.data["ssid"]
-    # Empty string is passed for open networks. Note: aioratio emits a
-    # RuntimeWarning when password is not None (including ""), so callers on
-    # open networks should omit the field entirely; "" is the safe fallback here.
-    password: str = call.data.get("password") or ""
+    # aioratio.wifi_connect emits a RuntimeWarning whenever password is not
+    # None (including ""), so pass None for open networks rather than the
+    # empty string the service schema would otherwise yield.
+    password: str | None = call.data.get("password") or None
 
     ble_device = async_ble_device_from_address(
         hass, coordinator.address, connectable=True
@@ -439,7 +441,7 @@ async def _handle_reconfigure_wifi(hass: HomeAssistant, call: ServiceCall) -> No
                     await client.wifi_connect(ssid, password)
             except ServiceValidationError:
                 raise
-    except RatioBleConnectionError as err:
+    except (RatioBleConnectionError, RatioBleError, BleakError) as err:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="ble_connect_failed",
