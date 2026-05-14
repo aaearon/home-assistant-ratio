@@ -240,9 +240,7 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
-class RatioDiagnosticBinarySensor(  # pyright: ignore[reportIncompatibleVariableOverride]
-    CoordinatorEntity[RatioCoordinator], BinarySensorEntity
-):
+class RatioDiagnosticBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity):
     """A diagnostic binary sensor reading ChargerDiagnostics data."""
 
     _attr_has_entity_name = True
@@ -265,6 +263,10 @@ class RatioDiagnosticBinarySensor(  # pyright: ignore[reportIncompatibleVariable
         )
 
     @property
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        return super().available
+
+    @property
     def is_on(self) -> bool | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return None
@@ -278,9 +280,7 @@ class RatioDiagnosticBinarySensor(  # pyright: ignore[reportIncompatibleVariable
             return None
 
 
-class RatioBinarySensor(  # pyright: ignore[reportIncompatibleVariableOverride]
-    CoordinatorEntity[RatioCoordinator], BinarySensorEntity
-):
+class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity):
     """A single binary sensor backed by the Ratio coordinator."""
 
     _attr_has_entity_name = True
