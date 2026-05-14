@@ -151,7 +151,10 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> ConfigFlowResult:
         """Handle a Bluetooth discovery."""
-        advert = parse_ble_service_info(discovery_info)
+        # _ServiceInfoLike Protocol declares manufacturer_data as Mapping[int, bytes];
+        # HA's BluetoothServiceInfoBleak narrows it to dict, which trips Protocol
+        # invariance under strict mypy. Structurally compatible at runtime.
+        advert = parse_ble_service_info(discovery_info)  # type: ignore[arg-type]
         if advert is None:
             return self.async_abort(reason="not_supported")
 
