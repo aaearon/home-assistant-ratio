@@ -27,6 +27,7 @@ from homeassistant.core import (
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.util.json import JsonValueType
 
 from .const import (
     ATTR_BEGIN_TIME,
@@ -373,7 +374,10 @@ async def _handle_import_session_history(
                 "error": str(err),
             },
         ) from err
-    return {"imported": imported}  # type: ignore[dict-item]
+    # Widen the inner value to JsonValueType so the outer dict matches
+    # the invariant ServiceResponse (dict[str, JsonValueType] | None).
+    inner: JsonValueType = dict(imported)
+    return {"imported": inner}
 
 
 async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:

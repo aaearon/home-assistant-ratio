@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 from types import ModuleType
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -54,6 +55,9 @@ from homeassistant.helpers.update_coordinator import UpdateFailed  # noqa: E402
 
 from custom_components.ratio.const import DOMAIN  # noqa: E402
 
+if TYPE_CHECKING:
+    from custom_components.ratio.ble import RatioBleCoordinator
+
 
 def _make_sensor_response(
     v1=2300, v2=2310, v3=2290, a1=160, a2=None, a3=None
@@ -86,7 +90,7 @@ def _make_service_info(address: str = "AA:BB:CC:DD:EE:FF") -> MagicMock:
     return info
 
 
-def _make_coordinator(hass: HomeAssistant) -> "RatioBleCoordinator":  # noqa: F821, UP037
+def _make_coordinator(hass: HomeAssistant) -> RatioBleCoordinator:
     """Build a RatioBleCoordinator with the parent __init__ stubbed out."""
     import logging
 

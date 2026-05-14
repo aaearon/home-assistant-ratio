@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+# Note on ``# pyright: ignore[reportIncompatibleVariableOverride]`` below:
+# HA's ``Entity`` base declares ``available`` (and platform classes declare
+# ``is_on``/``native_value``/``options``/``current_option``/``extra_state_attributes``/etc.)
+# as ``cached_property``. ``CoordinatorEntity.available`` overrides ``Entity``'s
+# with a plain ``@property`` — leaving the two bases declaring the same name in
+# incompatible ways. Our overrides use ``@property`` to match the dynamic
+# semantics that ``CoordinatorEntity`` already relies on; using
+# ``@cached_property`` here would cache values across coordinator updates and
+# break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
+# the same dynamic-property pattern. The variance error is structurally
+# unavoidable from this side of the HA boundary.
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from aioratio.models import ChargerOverview
 from aioratio.models.diagnostics import ChargerDiagnostics
@@ -471,7 +482,6 @@ async def async_setup_entry(
 class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
     """A single sensor backed by the Ratio coordinator."""
 
-    entity_description: RatioSensorEntityDescription
     _attr_has_entity_name = True
 
     def __init__(
@@ -498,12 +508,17 @@ class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
         return self.coordinator.data.chargers.get(self._serial)
 
     @property
-    def native_value(self) -> Any:
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        return super().available
+
+    @property
+    def native_value(self) -> Any:  # pyright: ignore[reportIncompatibleVariableOverride]
         ov = self._overview
         if ov is None:
             return None
+        desc = cast(RatioSensorEntityDescription, self.entity_description)
         try:
-            return self.entity_description.value_fn(ov)
+            return desc.value_fn(ov)
         except AttributeError:
             return None
 
@@ -515,7 +530,6 @@ class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
 class RatioDiagnosticSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
     """Sensor reading diagnostics data for a charger."""
 
-    entity_description: RatioDiagnosticSensorDescription
     _attr_has_entity_name = True
 
     def __init__(
@@ -536,14 +550,19 @@ class RatioDiagnosticSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
         )
 
     @property
-    def native_value(self) -> Any:
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        return super().available
+
+    @property
+    def native_value(self) -> Any:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return None
         diag = self.coordinator.data.diagnostics.get(self._serial)
         if diag is None:
             return None
+        desc = cast(RatioDiagnosticSensorDescription, self.entity_description)
         try:
-            return self.entity_description.value_fn(diag)
+            return desc.value_fn(diag)
         except AttributeError:
             return None
 
@@ -551,7 +570,6 @@ class RatioDiagnosticSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
 class RatioOcppSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
     """Sensor reading OCPP settings for a charger."""
 
-    entity_description: RatioOcppSensorDescription
     _attr_has_entity_name = True
 
     def __init__(
@@ -572,12 +590,17 @@ class RatioOcppSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
         )
 
     @property
-    def native_value(self) -> Any:
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        return super().available
+
+    @property
+    def native_value(self) -> Any:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return None
         settings = self.coordinator.data.ocpp_settings.get(self._serial)
+        desc = cast(RatioOcppSensorDescription, self.entity_description)
         try:
-            return self.entity_description.value_fn(settings)
+            return desc.value_fn(settings)
         except AttributeError:
             return None
 
@@ -585,7 +608,6 @@ class RatioOcppSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
 class RatioLastSessionSensor(CoordinatorEntity[RatioHistoryCoordinator], SensorEntity):
     """Sensor reading the most-recent completed session for a charger."""
 
-    entity_description: RatioLastSessionSensorDescription
     _attr_has_entity_name = True
 
     def __init__(
@@ -606,12 +628,17 @@ class RatioLastSessionSensor(CoordinatorEntity[RatioHistoryCoordinator], SensorE
         )
 
     @property
-    def native_value(self) -> Any:
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        return super().available
+
+    @property
+    def native_value(self) -> Any:  # pyright: ignore[reportIncompatibleVariableOverride]
         session = _last_session(self.coordinator, self._serial)
         if session is None:
             return None
+        desc = cast(RatioLastSessionSensorDescription, self.entity_description)
         try:
-            return self.entity_description.value_fn(session)
+            return desc.value_fn(session)
         except AttributeError:
             return None
 
@@ -621,7 +648,6 @@ class RatioBleSensor(
 ):
     """Sensor reading per-phase voltage/current from BLE polling."""
 
-    entity_description: RatioBleSensorEntityDescription
     _attr_has_entity_name = True
 
     def __init__(
@@ -637,7 +663,12 @@ class RatioBleSensor(
         )
 
     @property
-    def native_value(self) -> float | int | None:
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        return super().available
+
+    @property
+    def native_value(self) -> float | int | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return None
-        return self.entity_description.value_fn(self.coordinator.data)
+        desc = cast(RatioBleSensorEntityDescription, self.entity_description)
+        return desc.value_fn(self.coordinator.data)

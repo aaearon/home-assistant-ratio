@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+# Note on ``# pyright: ignore[reportIncompatibleVariableOverride]`` below:
+# HA's ``Entity`` base declares ``available`` (and platform classes declare
+# ``is_on``/``native_value``/``options``/``current_option``/``extra_state_attributes``/etc.)
+# as ``cached_property``. ``CoordinatorEntity.available`` overrides ``Entity``'s
+# with a plain ``@property`` — leaving the two bases declaring the same name in
+# incompatible ways. Our overrides use ``@property`` to match the dynamic
+# semantics that ``CoordinatorEntity`` already relies on; using
+# ``@cached_property`` here would cache values across coordinator updates and
+# break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
+# the same dynamic-property pattern. The variance error is structurally
+# unavoidable from this side of the HA boundary.
 import dataclasses
 import logging
 from typing import Any
@@ -81,6 +92,10 @@ class _RatioSelectBase(CoordinatorEntity[RatioCoordinator], SelectEntity):
             serial_number=serial,
         )
 
+    @property
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        return super().available
+
 
 class RatioChargeModeSelect(_RatioSelectBase):
     """Select for the charging mode."""
@@ -98,7 +113,7 @@ class RatioChargeModeSelect(_RatioSelectBase):
         super().__init__(coordinator, client, serial, "charge_mode")
 
     @property
-    def options(self) -> list[str]:
+    def options(self) -> list[str]:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return list(_CHARGE_MODE_FALLBACK)
         settings = self.coordinator.data.user_settings.get(self._serial)
@@ -107,7 +122,7 @@ class RatioChargeModeSelect(_RatioSelectBase):
         return settings.charging_mode.allowed_values or list(_CHARGE_MODE_FALLBACK)
 
     @property
-    def current_option(self) -> str | None:
+    def current_option(self) -> str | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return None
         settings = self.coordinator.data.user_settings.get(self._serial)
@@ -173,11 +188,11 @@ class RatioActiveVehicleSelect(_RatioSelectBase):
         return names.get(vehicle_id, vehicle_id)
 
     @property
-    def options(self) -> list[str]:
+    def options(self) -> list[str]:  # pyright: ignore[reportIncompatibleVariableOverride]
         return list(self._display_names().values())
 
     @property
-    def current_option(self) -> str | None:
+    def current_option(self) -> str | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         preferred = self.coordinator.preferred_vehicle.get(self._serial)
         if preferred is not None:
             return self._name_for(preferred)
@@ -242,7 +257,7 @@ class RatioCpmsSelect(_RatioSelectBase):
         return settings.cpms_status.is_change_allowed
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
+    def extra_state_attributes(self) -> dict[str, Any] | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return None
         settings = self.coordinator.data.ocpp_settings.get(self._serial)
@@ -263,7 +278,7 @@ class RatioCpmsSelect(_RatioSelectBase):
         return label
 
     @property
-    def options(self) -> list[str]:
+    def options(self) -> list[str]:  # pyright: ignore[reportIncompatibleVariableOverride]
         return [
             self._option_label(opt)
             for opt in self._available_options()
@@ -271,7 +286,7 @@ class RatioCpmsSelect(_RatioSelectBase):
         ]
 
     @property
-    def current_option(self) -> str | None:
+    def current_option(self) -> str | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return None
         settings = self.coordinator.data.ocpp_settings.get(self._serial)

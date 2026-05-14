@@ -2,6 +2,17 @@
 
 from __future__ import annotations
 
+# Note on ``# pyright: ignore[reportIncompatibleVariableOverride]`` below:
+# HA's ``Entity`` base declares ``available`` (and platform classes declare
+# ``is_on``/``native_value``/``options``/``current_option``/``extra_state_attributes``/etc.)
+# as ``cached_property``. ``CoordinatorEntity.available`` overrides ``Entity``'s
+# with a plain ``@property`` — leaving the two bases declaring the same name in
+# incompatible ways. Our overrides use ``@property`` to match the dynamic
+# semantics that ``CoordinatorEntity`` already relies on; using
+# ``@cached_property`` here would cache values across coordinator updates and
+# break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
+# the same dynamic-property pattern. The variance error is structurally
+# unavoidable from this side of the HA boundary.
 import dataclasses
 import logging
 from typing import Any
@@ -80,7 +91,11 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
         )
 
     @property
-    def is_on(self) -> bool | None:
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        return super().available
+
+    @property
+    def is_on(self) -> bool | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return None
         ov = self.coordinator.data.chargers.get(self._serial)
@@ -165,7 +180,7 @@ class RatioOcppEnabledSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
         return self.coordinator.data.ocpp_settings.get(self._serial)
 
     @property
-    def available(self) -> bool:
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
         if not super().available or self.coordinator.data is None:
             return False
         settings = self._ocpp_settings()
@@ -174,7 +189,7 @@ class RatioOcppEnabledSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
         return settings.enabled_status.is_change_allowed
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
+    def extra_state_attributes(self) -> dict[str, Any] | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         settings = self._ocpp_settings()
         if settings is None:
             return None
@@ -184,7 +199,7 @@ class RatioOcppEnabledSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
         return None
 
     @property
-    def is_on(self) -> bool | None:
+    def is_on(self) -> bool | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         settings = self._ocpp_settings()
         if settings is None:
             return None

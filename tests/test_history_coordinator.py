@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -50,7 +51,7 @@ def _make_main_coordinator(serials: list[str]) -> MagicMock:
     return main
 
 
-def _patch_import() -> AsyncMock:
+def _patch_import() -> AbstractContextManager[AsyncMock]:
     """Return a patcher context for async_import_sessions.
 
     The mock returns ``starting_total + sum(session.total_charging_energy)`` so
@@ -130,6 +131,7 @@ async def test_dedup_across_two_polls_with_overlap(hass: HomeAssistant) -> None:
     # The second begin_time must reflect the 1-hour overlap relative to the
     # last imported end time (s2.end == 1_700_001_600).
     second_call = client.session_history.await_args_list[0]
+    assert s2.end is not None
     last_end = s2.end.time
     assert second_call.kwargs["begin_time"] == last_end - HISTORY_OVERLAP_SECONDS
 
@@ -210,8 +212,9 @@ async def test_sessions_survive_restart_with_no_new_sessions(
     assert len(coord2.data[serial]) == 1
     assert coord2.data[serial][0].session_id == "id-1"
     # _last_session must return the session (not None).
-    assert _last_session(coord2, serial) is not None
-    assert _last_session(coord2, serial).session_id == "id-1"  # type: ignore[union-attr]
+    last = _last_session(coord2, serial)
+    assert last is not None
+    assert last.session_id == "id-1"
 
 
 @pytest.mark.asyncio

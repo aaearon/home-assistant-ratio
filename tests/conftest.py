@@ -9,12 +9,24 @@ from __future__ import annotations
 
 import pathlib
 import sys
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioratio.models.history import SessionHistoryPage
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+
+def _r(result: object) -> dict[str, Any]:
+    """Cast a ``ConfigFlowResult`` TypedDict to ``dict[str, Any]`` for indexing.
+
+    Pyright marks every key in HA's ``ConfigFlowResult`` as ``NotRequired``,
+    so direct indexing trips ``reportTypedDictNotRequiredAccess`` everywhere
+    in test files. This helper centralizes the boundary cast.
+    """
+    return cast(dict[str, Any], result)
+
 
 # pyserial and pyudev are not installed in the test venv but are transitive
 # imports required when homeassistant.components.bluetooth loads its usb
@@ -136,7 +148,7 @@ def mock_config_entry(hass) -> MockConfigEntry:
 @pytest.fixture
 async def setup_integration(
     hass, mock_config_entry, mock_ratio_client
-) -> MockConfigEntry:
+) -> AsyncGenerator[MockConfigEntry, None]:
     """Set up the Ratio integration via the real async_setup_entry path.
 
     After this fixture completes, ``entry.runtime_data`` contains the

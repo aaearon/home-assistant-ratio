@@ -11,6 +11,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ratio.const import CONF_BLE_ENABLED_SERIALS, DOMAIN
+from tests.conftest import _r
 
 
 def _make_service_info(name: str, address: str = "AA:BB:CC:DD:EE:FF") -> MagicMock:
@@ -64,8 +65,8 @@ async def test_bluetooth_step_aborts_not_supported(hass: HomeAssistant) -> None:
             data=service_info,
         )
 
-    assert result["type"] == FlowResultType.ABORT
-    assert result["reason"] == "not_supported"
+    assert _r(result)["type"] == FlowResultType.ABORT
+    assert _r(result)["reason"] == "not_supported"
 
 
 @pytest.mark.asyncio
@@ -92,8 +93,8 @@ async def test_bluetooth_step_aborts_cloud_account_required(
             data=service_info,
         )
 
-    assert result["type"] == FlowResultType.ABORT
-    assert result["reason"] == "cloud_account_required"
+    assert _r(result)["type"] == FlowResultType.ABORT
+    assert _r(result)["reason"] == "cloud_account_required"
 
 
 @pytest.mark.asyncio
@@ -120,9 +121,9 @@ async def test_bluetooth_step_aborts_ble_already_configured(
             data=service_info,
         )
 
-    assert result["type"] == FlowResultType.ABORT
-    assert result["reason"] == "ble_already_configured"
-    assert result["description_placeholders"] == {"serial": serial}
+    assert _r(result)["type"] == FlowResultType.ABORT
+    assert _r(result)["reason"] == "ble_already_configured"
+    assert _r(result)["description_placeholders"] == {"serial": serial}
 
 
 @pytest.mark.asyncio
@@ -148,8 +149,8 @@ async def test_bluetooth_confirm_enables_ble(hass: HomeAssistant) -> None:
             data=service_info,
         )
 
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "bluetooth_confirm"
+    assert _r(result)["type"] == FlowResultType.FORM
+    assert _r(result)["step_id"] == "bluetooth_confirm"
 
     with patch.object(
         hass.config_entries, "async_reload", new_callable=AsyncMock
@@ -160,8 +161,8 @@ async def test_bluetooth_confirm_enables_ble(hass: HomeAssistant) -> None:
         )
         await hass.async_block_till_done()
 
-    assert result2["type"] == FlowResultType.ABORT
-    assert result2["reason"] == "ble_configured"
+    assert _r(result2)["type"] == FlowResultType.ABORT
+    assert _r(result2)["reason"] == "ble_configured"
     assert serial in cloud_entry.options.get(CONF_BLE_ENABLED_SERIALS, [])
     mock_reload.assert_called_once_with(cloud_entry.entry_id)
 
@@ -185,8 +186,8 @@ async def test_options_flow_removes_serial(hass: HomeAssistant) -> None:
     ):
         result = await hass.config_entries.options.async_init(entry.entry_id)
 
-    assert result["type"] == FlowResultType.FORM
-    assert result["step_id"] == "init"
+    assert _r(result)["type"] == FlowResultType.FORM
+    assert _r(result)["step_id"] == "init"
 
     # Submit with the serial unchecked (False).
     result2 = await hass.config_entries.options.async_configure(
@@ -195,5 +196,5 @@ async def test_options_flow_removes_serial(hass: HomeAssistant) -> None:
     )
     await hass.async_block_till_done()
 
-    assert result2["type"] == FlowResultType.CREATE_ENTRY
-    assert serial not in result2["data"].get(CONF_BLE_ENABLED_SERIALS, [])
+    assert _r(result2)["type"] == FlowResultType.CREATE_ENTRY
+    assert serial not in _r(result2)["data"].get(CONF_BLE_ENABLED_SERIALS, [])

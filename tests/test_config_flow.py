@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.ratio.const import DOMAIN
+from tests.conftest import _r
 
 
 @pytest.mark.asyncio
@@ -31,8 +32,8 @@ async def test_user_step_creates_entry(hass: HomeAssistant) -> None:
         result = await hass.config_entries.flow.async_init(
             DOMAIN, context={"source": config_entries.SOURCE_USER}
         )
-        assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "user"
+        assert _r(result)["type"] == FlowResultType.FORM
+        assert _r(result)["step_id"] == "user"
 
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
@@ -40,9 +41,9 @@ async def test_user_step_creates_entry(hass: HomeAssistant) -> None:
         )
         await hass.async_block_till_done()
 
-    assert result2["type"] == FlowResultType.CREATE_ENTRY
-    assert result2["title"] == "user@example.com"
-    assert result2["data"] == {
+    assert _r(result2)["type"] == FlowResultType.CREATE_ENTRY
+    assert _r(result2)["title"] == "user@example.com"
+    assert _r(result2)["data"] == {
         CONF_EMAIL: "user@example.com",
         CONF_PASSWORD: "hunter2",
     }
@@ -64,8 +65,8 @@ async def test_user_step_invalid_auth_shows_error(hass: HomeAssistant) -> None:
             {CONF_EMAIL: "user@example.com", CONF_PASSWORD: "wrong"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "invalid_auth"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "invalid_auth"}
 
 
 @pytest.mark.asyncio
@@ -84,8 +85,8 @@ async def test_user_step_connection_error(hass: HomeAssistant) -> None:
             {CONF_EMAIL: "user@example.com", CONF_PASSWORD: "pass"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "cannot_connect"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "cannot_connect"}
 
 
 @pytest.mark.asyncio
@@ -104,8 +105,8 @@ async def test_user_step_unknown_ratio_error(hass: HomeAssistant) -> None:
             {CONF_EMAIL: "user@example.com", CONF_PASSWORD: "pass"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "unknown"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "unknown"}
 
 
 @pytest.mark.asyncio
@@ -124,8 +125,8 @@ async def test_user_step_unexpected_exception(hass: HomeAssistant) -> None:
             {CONF_EMAIL: "user@example.com", CONF_PASSWORD: "pass"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "unknown"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "unknown"}
 
 
 @pytest.mark.asyncio
@@ -152,8 +153,8 @@ async def test_reauth_step_success(hass: HomeAssistant) -> None:
         ),
     ):
         result = await entry.start_reauth_flow(hass)
-        assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "reauth_confirm"
+        assert _r(result)["type"] == FlowResultType.FORM
+        assert _r(result)["step_id"] == "reauth_confirm"
 
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
@@ -161,8 +162,8 @@ async def test_reauth_step_success(hass: HomeAssistant) -> None:
         )
         await hass.async_block_till_done()
 
-    assert result2["type"] == FlowResultType.ABORT
-    assert result2["reason"] == "reauth_successful"
+    assert _r(result2)["type"] == FlowResultType.ABORT
+    assert _r(result2)["reason"] == "reauth_successful"
     assert entry.data[CONF_PASSWORD] == "new_pass"
 
 
@@ -189,8 +190,8 @@ async def test_reauth_step_invalid_auth(hass: HomeAssistant) -> None:
             {CONF_PASSWORD: "wrong"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "invalid_auth"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "invalid_auth"}
 
 
 @pytest.mark.asyncio
@@ -216,8 +217,8 @@ async def test_reauth_step_connection_error(hass: HomeAssistant) -> None:
             {CONF_PASSWORD: "pass"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "cannot_connect"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "cannot_connect"}
 
 
 @pytest.mark.asyncio
@@ -243,8 +244,8 @@ async def test_reauth_step_unknown_error(hass: HomeAssistant) -> None:
             {CONF_PASSWORD: "pass"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "unknown"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "unknown"}
 
 
 @pytest.mark.asyncio
@@ -270,8 +271,8 @@ async def test_reconfigure_connection_error(hass: HomeAssistant) -> None:
             {CONF_EMAIL: "user@example.com", CONF_PASSWORD: "pass"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "cannot_connect"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "cannot_connect"}
 
 
 @pytest.mark.asyncio
@@ -297,8 +298,8 @@ async def test_reconfigure_unknown_error(hass: HomeAssistant) -> None:
             {CONF_EMAIL: "user@example.com", CONF_PASSWORD: "pass"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "unknown"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "unknown"}
 
 
 @pytest.mark.asyncio
@@ -324,8 +325,8 @@ async def test_reconfigure_unexpected_exception(hass: HomeAssistant) -> None:
             {CONF_EMAIL: "user@example.com", CONF_PASSWORD: "pass"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "unknown"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "unknown"}
 
 
 @pytest.mark.asyncio
@@ -352,8 +353,8 @@ async def test_reconfigure_step_updates_credentials(hass: HomeAssistant) -> None
         ),
     ):
         result = await entry.start_reconfigure_flow(hass)
-        assert result["type"] == FlowResultType.FORM
-        assert result["step_id"] == "reconfigure"
+        assert _r(result)["type"] == FlowResultType.FORM
+        assert _r(result)["step_id"] == "reconfigure"
 
         result2 = await hass.config_entries.flow.async_configure(
             result["flow_id"],
@@ -361,8 +362,8 @@ async def test_reconfigure_step_updates_credentials(hass: HomeAssistant) -> None
         )
         await hass.async_block_till_done()
 
-    assert result2["type"] == FlowResultType.ABORT
-    assert result2["reason"] == "reconfigure_successful"
+    assert _r(result2)["type"] == FlowResultType.ABORT
+    assert _r(result2)["reason"] == "reconfigure_successful"
     assert entry.data[CONF_PASSWORD] == "new_pass"
 
 
@@ -388,8 +389,8 @@ async def test_reconfigure_step_rejects_different_account(hass: HomeAssistant) -
             {CONF_EMAIL: "different@example.com", CONF_PASSWORD: "pass"},
         )
 
-    assert result2["type"] == FlowResultType.ABORT
-    assert result2["reason"] == "account_mismatch"
+    assert _r(result2)["type"] == FlowResultType.ABORT
+    assert _r(result2)["reason"] == "account_mismatch"
 
 
 @pytest.mark.asyncio
@@ -415,5 +416,5 @@ async def test_reconfigure_step_invalid_auth(hass: HomeAssistant) -> None:
             {CONF_EMAIL: "user@example.com", CONF_PASSWORD: "wrong"},
         )
 
-    assert result2["type"] == FlowResultType.FORM
-    assert result2["errors"] == {"base": "invalid_auth"}
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["errors"] == {"base": "invalid_auth"}
