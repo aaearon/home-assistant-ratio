@@ -122,6 +122,7 @@ async def test_bluetooth_step_aborts_ble_already_configured(
 
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "ble_already_configured"
+    assert result["description_placeholders"] == {"serial": serial}
 
 
 @pytest.mark.asyncio
