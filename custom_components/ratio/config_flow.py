@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from aioratio import MemoryTokenStore, RatioClient
-from aioratio.ble import parse_service_info as parse_ble_service_info
+from aioratio.ble import parse_advertisement
 from aioratio.exceptions import RatioAuthError, RatioConnectionError, RatioError
 from homeassistant.config_entries import (
     ConfigEntry,
@@ -151,10 +151,9 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> ConfigFlowResult:
         """Handle a Bluetooth discovery."""
-        # _ServiceInfoLike Protocol declares manufacturer_data as Mapping[int, bytes];
-        # HA's BluetoothServiceInfoBleak narrows it to dict, which trips Protocol
-        # invariance under strict mypy. Structurally compatible at runtime.
-        advert = parse_ble_service_info(discovery_info)  # type: ignore[arg-type]
+        advert = parse_advertisement(
+            discovery_info.name, discovery_info.manufacturer_data
+        )
         if advert is None:
             return self.async_abort(reason="not_supported")
 
