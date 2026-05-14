@@ -30,7 +30,7 @@ Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/
 
 Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
 
-Home Assistant will install `aioratio[ble]==0.10.0` from PyPI automatically; no extra Python deps to manage.
+Home Assistant will install `aioratio[ble]==0.10.1` from PyPI automatically; no extra Python deps to manage.
 
 ## Removing the Integration
 

@@ -91,7 +91,7 @@ async def test_reconfigure_wifi_no_password(
     device_registry: dr.DeviceRegistry,
     setup_integration: MockConfigEntry,
 ) -> None:
-    """When password is omitted, wifi_connect is called with empty string."""
+    """When password is omitted, wifi_connect is called with None (open network)."""
     entry = setup_integration
     device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -118,7 +118,7 @@ async def test_reconfigure_wifi_no_password(
             blocking=True,
         )
 
-    ble_client.wifi_connect.assert_awaited_once_with("OpenNet", "")
+    ble_client.wifi_connect.assert_awaited_once_with("OpenNet", None)
 
 
 @pytest.mark.asyncio

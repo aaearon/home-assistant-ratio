@@ -51,6 +51,7 @@
       "account_mismatch": "The email address does not match the original account. To use a different account, remove and re-add the integration.",
       "not_supported": "This device is not a Ratio EV charger.",
       "cloud_account_required": "No Ratio cloud account is configured for this charger. Set up the Ratio integration first.",
+      "ble_already_configured": "Bluetooth is already enabled for charger {serial}.",
       "ble_configured": "Bluetooth enabled for charger {serial}. The integration will reload."
     }
   },
