@@ -214,7 +214,7 @@
       "message": "Bluetooth is not enabled for charger {serial}."
     },
     "ssid_not_found": {
-      "message": "SSID '{ssid}' was not found in the Wi-Fi scan results."
+      "message": "SSID {ssid} was not found in the Wi-Fi scan results."
     },
     "ble_connect_failed": {
       "message": "Could not connect to charger {serial} via Bluetooth: {error}"

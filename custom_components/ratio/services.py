@@ -413,7 +413,9 @@ async def _handle_reconfigure_wifi(hass: HomeAssistant, call: ServiceCall) -> No
     # open networks should omit the field entirely; "" is the safe fallback here.
     password: str = call.data.get("password") or ""
 
-    ble_device = async_ble_device_from_address(hass, coordinator.address, connectable=True)
+    ble_device = async_ble_device_from_address(
+        hass, coordinator.address, connectable=True
+    )
     if ble_device is None:
         raise ServiceValidationError(
             translation_domain=DOMAIN,

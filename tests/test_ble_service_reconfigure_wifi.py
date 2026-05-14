@@ -21,7 +21,9 @@ def _make_wifi_ap(ssid: str) -> MagicMock:
     return ap
 
 
-def _make_ble_coordinator(serial: str = "SN001", address: str = "AA:BB:CC:DD:EE:FF") -> MagicMock:
+def _make_ble_coordinator(
+    serial: str = "SN001", address: str = "AA:BB:CC:DD:EE:FF"
+) -> MagicMock:
     coord = MagicMock()
     coord.serial = serial
     coord.address = address
@@ -144,14 +146,14 @@ async def test_reconfigure_wifi_ssid_not_found(
             return_value=ble_device,
         ),
         patch("custom_components.ratio.services.BleClient", return_value=ble_client),
+        pytest.raises(ServiceValidationError) as exc_info,
     ):
-        with pytest.raises(ServiceValidationError) as exc_info:
-            await hass.services.async_call(
-                DOMAIN,
-                SERVICE_RECONFIGURE_WIFI,
-                {"device_id": device.id, "ssid": "Missing", "password": "pw"},
-                blocking=True,
-            )
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_RECONFIGURE_WIFI,
+            {"device_id": device.id, "ssid": "Missing", "password": "pw"},
+            blocking=True,
+        )
 
     assert exc_info.value.translation_key == "ssid_not_found"
     ble_client.wifi_connect.assert_not_awaited()
@@ -240,13 +242,13 @@ async def test_reconfigure_wifi_connect_failed(
             return_value=ble_device,
         ),
         patch("custom_components.ratio.services.BleClient", return_value=ble_client),
+        pytest.raises(ServiceValidationError) as exc_info,
     ):
-        with pytest.raises(ServiceValidationError) as exc_info:
-            await hass.services.async_call(
-                DOMAIN,
-                SERVICE_RECONFIGURE_WIFI,
-                {"device_id": device.id, "ssid": "TargetNet", "password": "pw"},
-                blocking=True,
-            )
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_RECONFIGURE_WIFI,
+            {"device_id": device.id, "ssid": "TargetNet", "password": "pw"},
+            blocking=True,
+        )
 
     assert exc_info.value.translation_key == "ble_connect_failed"

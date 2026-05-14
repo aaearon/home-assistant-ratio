@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from aioratio import MemoryTokenStore, RatioClient
-from aioratio.ble import parse_service_info as parse_ble_service_info
+from aioratio.ble import parse_advertisement
 from aioratio.exceptions import RatioAuthError, RatioConnectionError, RatioError
 from homeassistant.config_entries import (
     ConfigEntry,
@@ -151,7 +151,9 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> ConfigFlowResult:
         """Handle a Bluetooth discovery."""
-        advert = parse_ble_service_info(discovery_info)
+        advert = parse_advertisement(
+            discovery_info.name, discovery_info.manufacturer_data
+        )
         if advert is None:
             return self.async_abort(reason="not_supported")
 
@@ -189,8 +191,12 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Confirm enabling Bluetooth for the discovered charger."""
+        assert self._cloud_entry_id is not None
+        assert self._ble_serial is not None
+        assert self._ble_address is not None
         if user_input is not None:
             entry = self.hass.config_entries.async_get_entry(self._cloud_entry_id)
+            assert entry is not None
             existing = list(entry.options.get(CONF_BLE_ENABLED_SERIALS, []))
             if self._ble_serial not in existing:
                 existing.append(self._ble_serial)
