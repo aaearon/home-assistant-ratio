@@ -531,6 +531,96 @@ async def test_idle_polls_do_not_shrink_fetch_window_past_session_begin(
 
 
 @pytest.mark.asyncio
+async def test_empty_history_charger_does_not_repeat_30_day_backfill(
+    hass: HomeAssistant, freezer
+) -> None:
+    """A charger that has not yet produced any completed sessions must not
+    re-fetch the full ``HISTORY_BACKFILL_DAYS`` window every poll cycle.
+
+    The fix for #26 stopped advancing ``_last_imported_end_time`` on empty
+    polls — correct, since advancing it past in-progress session begins is
+    what caused the original bug. But that left brand-new chargers with no
+    cursor at all, so ``_begin_time_for`` would pick the 30-day backfill
+    branch on every 5-minute refresh forever (codex review of PR #28).
+
+    A separate ``_empty_poll_watermark`` dict tracks the empty-poll fallback
+    independently of the import cursor. Once a real session is imported the
+    watermark is dropped and ``_last_imported_end_time`` takes over.
+    """
+    freezer.move_to("2026-05-14T12:00:00+00:00")
+    serial = "S_NEW"
+    entry = _make_entry(hass, entry_id="e_empty_hist")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+
+    # First poll uses the 30-day backfill (no prior cursor or watermark).
+    first_call = client.session_history.await_args_list[0]
+    first_now = int(dt_util.utcnow().timestamp())
+    assert first_call.kwargs["begin_time"] == first_now - HISTORY_BACKFILL_DAYS * 86400
+
+    # Second poll, 5 minutes later — must use the 1-hour overlap window from
+    # the empty-poll watermark, not the 30-day backfill again.
+    freezer.move_to("2026-05-14T12:05:00+00:00")
+    client.session_history.reset_mock()
+    with _patch_import():
+        await coord.async_refresh()
+    second_call = client.session_history.await_args_list[0]
+    second_now = int(dt_util.utcnow().timestamp())
+    assert second_call.kwargs["begin_time"] == first_now - HISTORY_OVERLAP_SECONDS, (
+        f"begin_time {second_call.kwargs['begin_time']} should be the "
+        f"watermark ({first_now}) minus overlap, not a 30-day backfill"
+    )
+    # Sanity: definitely not a 30-day backfill on the second poll.
+    assert second_call.kwargs["begin_time"] > second_now - HISTORY_BACKFILL_DAYS * 86400
+
+    # When a real session finally arrives, the watermark must be dropped and
+    # the cursor takes over — guarantees we never reintroduce drift.
+    s_first = _session("first", serial, second_now - 60, energy=1234)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s_first], next_token=None)
+    )
+    freezer.move_to("2026-05-14T12:10:00+00:00")
+    with _patch_import():
+        await coord.async_refresh()
+    assert serial not in coord._empty_poll_watermark
+    assert serial in coord._last_imported_end_time
+
+
+@pytest.mark.asyncio
+async def test_empty_poll_watermark_persists_across_restart(
+    hass: HomeAssistant, freezer
+) -> None:
+    """The empty-poll watermark must survive a HA restart so a new charger
+    doesn't restart its 30-day backfill loop on every reload."""
+    freezer.move_to("2026-05-14T12:00:00+00:00")
+    serial = "S_NEW_RESTART"
+    entry = _make_entry(hass, entry_id="e_empty_hist_restart")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[], next_token=None)
+    )
+    coord1 = RatioHistoryCoordinator(hass, client, entry, main)
+    with _patch_import():
+        await coord1.async_config_entry_first_refresh()
+    assert serial in coord1._empty_poll_watermark
+    persisted_watermark = coord1._empty_poll_watermark[serial]
+
+    # Simulate restart: fresh coordinator on the same entry. Watermark must
+    # rehydrate from storage.
+    coord2 = RatioHistoryCoordinator(hass, client, entry, main)
+    await coord2.async_load()
+    assert coord2._empty_poll_watermark.get(serial) == persisted_watermark
+
+
+@pytest.mark.asyncio
 async def test_load_clamps_cursor_advanced_past_persisted_session_ends(
     hass: HomeAssistant,
 ) -> None:
@@ -595,8 +685,7 @@ async def test_load_clamps_cursor_advanced_past_persisted_session_ends(
     await coord.async_load()
 
     assert coord._last_imported_end_time[serial] == actual_end, (
-        f"cursor not clamped: {coord._last_imported_end_time[serial]} "
-        f"!= {actual_end}"
+        f"cursor not clamped: {coord._last_imported_end_time[serial]} != {actual_end}"
     )
 
 

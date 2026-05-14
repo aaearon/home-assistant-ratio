@@ -408,6 +408,12 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         )
         # Per-serial state. Hydrated by ``async_load`` before first refresh.
         self._last_imported_end_time: dict[str, int] = {}
+        # Fallback "how far back to look" anchor for chargers that have not
+        # yet produced any completed sessions. Distinct from the cursor above
+        # so an empty-poll advance never shrinks the fetch window past a real
+        # session's begin time (issue #26). Without this, a brand-new charger
+        # would re-fetch the full HISTORY_BACKFILL_DAYS window every poll.
+        self._empty_poll_watermark: dict[str, int] = {}
         self._seen_ids: dict[str, list[str]] = {}
         self._running_total: dict[str, float] = {}
         # Recent sessions persisted to survive HA restarts (self.data is None
@@ -441,6 +447,13 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                 self._running_total = {
                     str(k): float(v)
                     for k, v in rt.items()
+                    if isinstance(v, (int, float))
+                }
+            epw = stored.get("empty_poll_watermark")
+            if isinstance(epw, dict):
+                self._empty_poll_watermark = {
+                    str(k): int(v)
+                    for k, v in epw.items()
                     if isinstance(v, (int, float))
                 }
             raw_sessions = stored.get("sessions")
@@ -522,6 +535,7 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         await self._store.async_save(
             {
                 "last_imported_end_time": dict(self._last_imported_end_time),
+                "empty_poll_watermark": dict(self._empty_poll_watermark),
                 "seen_ids": {k: list(v) for k, v in self._seen_ids.items()},
                 "running_total": dict(self._running_total),
                 "sessions": sessions_to_persist,
@@ -531,9 +545,17 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
     def _begin_time_for(self, serial: str, now_ts: int) -> int:
         """Compute begin_time for the next session_history call for ``serial``."""
         last = self._last_imported_end_time.get(serial)
-        if last is None:
-            return now_ts - HISTORY_BACKFILL_DAYS * 86400
-        return max(0, last - HISTORY_OVERLAP_SECONDS)
+        if last is not None:
+            return max(0, last - HISTORY_OVERLAP_SECONDS)
+        # No imported sessions yet — use the empty-poll watermark to avoid
+        # re-running the full HISTORY_BACKFILL_DAYS fetch every cycle. The
+        # watermark is a separate field from ``_last_imported_end_time`` so
+        # advancing it here can never shrink the window past a real session
+        # (issue #26).
+        watermark = self._empty_poll_watermark.get(serial)
+        if watermark is not None:
+            return max(0, watermark - HISTORY_OVERLAP_SECONDS)
+        return now_ts - HISTORY_BACKFILL_DAYS * 86400
 
     async def _fetch_all_pages(
         self, serial: str, begin_time: int, end_time: int | None = None
@@ -690,6 +712,17 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                 self._last_imported_end_time[serial] = max(
                     self._last_imported_end_time.get(serial, 0), int(latest_end)
                 )
+                # Real cursor now anchored — drop the empty-poll fallback so
+                # subsequent polls use the session-end-based window.
+                self._empty_poll_watermark.pop(serial, None)
+            elif serial not in self._last_imported_end_time:
+                # No sessions imported yet for this charger. Advance the
+                # empty-poll watermark so the next poll uses a 1-hour overlap
+                # window instead of the full HISTORY_BACKFILL_DAYS backfill.
+                # Safe to advance freely: ``_last_imported_end_time`` is the
+                # only anchor consulted once a real session exists, so this
+                # cannot reintroduce the issue #26 cursor-drift bug.
+                self._empty_poll_watermark[serial] = now_ts
 
             # Cap dedup IDs (FIFO).
             id_list = list(self._seen_ids.get(serial, []))
