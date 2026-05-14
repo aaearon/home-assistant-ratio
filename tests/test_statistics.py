@@ -3,14 +3,26 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from aioratio.models.history import Session, TimeData
+from homeassistant.components.recorder.models.statistics import StatisticData
 
 from custom_components.ratio.statistics import (
     build_metadata,
     build_statistics,
     statistic_id_for,
 )
+
+
+def _sd(sd: StatisticData) -> dict[str, Any]:
+    """Cast a ``StatisticData`` TypedDict to ``dict[str, Any]`` for indexing.
+
+    Pyright marks every key in HA's ``StatisticData`` as ``NotRequired``,
+    so direct indexing trips ``reportTypedDictNotRequiredAccess``. This
+    helper centralizes the boundary cast.
+    """
+    return cast(dict[str, Any], sd)
 
 
 def _session(sid: str, begin_ts: int, energy: int) -> Session:
@@ -101,15 +113,15 @@ def test_build_statistics_monotonic_sum_and_hour_floor() -> None:
     assert len(stats) == 2
 
     # Hours should be floored.
-    assert stats[0]["start"] == datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
-    assert stats[1]["start"] == datetime(2024, 1, 1, 13, 0, tzinfo=UTC)
+    assert _sd(stats[0])["start"] == datetime(2024, 1, 1, 12, 0, tzinfo=UTC)
+    assert _sd(stats[1])["start"] == datetime(2024, 1, 1, 13, 0, tzinfo=UTC)
 
-    assert stats[0]["state"] == 1500.0
-    assert stats[1]["state"] == 2500.0
-    assert stats[0]["sum"] == 2500.0
-    assert stats[1]["sum"] == 5000.0
+    assert _sd(stats[0])["state"] == 1500.0
+    assert _sd(stats[1])["state"] == 2500.0
+    assert _sd(stats[0])["sum"] == 2500.0
+    assert _sd(stats[1])["sum"] == 5000.0
     # Sums must be monotonic.
-    assert stats[1]["sum"] >= stats[0]["sum"]
+    assert _sd(stats[1])["sum"] >= _sd(stats[0])["sum"]
 
 
 def test_build_statistics_skips_sessions_without_begin() -> None:
@@ -124,7 +136,7 @@ def test_build_statistics_skips_sessions_without_begin() -> None:
     stats, total = build_statistics([bad, good], starting_total=0.0)
     assert len(stats) == 1
     assert total == 1000.0
-    assert stats[0]["state"] == 1000.0
+    assert _sd(stats[0])["state"] == 1000.0
 
 
 def test_build_statistics_empty_returns_empty() -> None:

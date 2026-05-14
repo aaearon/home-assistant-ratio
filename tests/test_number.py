@@ -147,6 +147,7 @@ async def test_set_solar_field_preserves_other_fields() -> None:
     new_settings: SolarSettings = args[1]
     assert isinstance(new_settings, SolarSettings)
     # Changed field
+    assert new_settings.sun_on_delay_minutes is not None
     assert new_settings.sun_on_delay_minutes.value == 7.0
     # Preserve bounds on changed field
     assert new_settings.sun_on_delay_minutes.lower == 0.0
@@ -176,6 +177,7 @@ async def test_set_user_field_preserves_other_fields() -> None:
     assert args[0] == SERIAL
     new_settings: UserSettings = args[1]
     assert isinstance(new_settings, UserSettings)
+    assert new_settings.maximum_charging_current is not None
     assert new_settings.maximum_charging_current.value == 20.0
     assert new_settings.maximum_charging_current.lower == 6.0
     assert new_settings.maximum_charging_current.upper == 32.0

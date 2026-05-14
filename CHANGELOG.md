@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+- Internal: tighten pyright surface to zero errors. Removed lazy `# type: ignore` suppressions in `number.py`, `services.py`, and `test_history_coordinator.py` by adopting structural fixes (literal-kwarg `dataclasses.replace`, widened `ServiceResponse` value, assert-then-use pattern). Entity property overrides remain `@property` (matching `CoordinatorEntity`'s dynamic semantics) with documented per-site `# pyright: ignore[reportIncompatibleVariableOverride]` suppressions to bridge the HA `Entity`/`CoordinatorEntity` base-class inconsistency. Test files using HA TypedDicts (`ConfigFlowResult`, `StatisticData`) use a small `_r`/`_sd` cast helper to satisfy `reportTypedDictNotRequiredAccess`.
+
 ## [0.10.0] — 2026-05-13
 
 > ⚠️ **BLE feature is included but real-hardware validation is pending community reports.** Discovery/config flow and unit tests are green; the live GATT poll path against a charger has not been fully verified by the maintainer. Existing cloud-only installs are unaffected.

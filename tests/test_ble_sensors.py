@@ -155,8 +155,8 @@ async def test_ble_sensors_created_when_ble_enabled(hass) -> None:
 
     added_entities: list = []
 
-    def _add_entities(entities, *args, **kwargs) -> None:
-        added_entities.extend(entities)
+    def _add_entities(new_entities, *args, **kwargs) -> None:
+        added_entities.extend(new_entities)
 
     await async_setup_entry(hass, entry, _add_entities)
 
@@ -185,8 +185,8 @@ async def test_ble_sensors_not_created_when_ble_disabled(hass) -> None:
 
     added_entities: list = []
 
-    def _add_entities(entities, *args, **kwargs) -> None:
-        added_entities.extend(entities)
+    def _add_entities(new_entities, *args, **kwargs) -> None:
+        added_entities.extend(new_entities)
 
     await async_setup_entry(hass, entry, _add_entities)
 

@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+# Note on ``# pyright: ignore[reportIncompatibleVariableOverride]`` below:
+# HA's ``Entity`` base declares ``available`` (and platform classes declare
+# ``is_on``/``native_value``/``options``/``current_option``/``extra_state_attributes``/etc.)
+# as ``cached_property``. ``CoordinatorEntity.available`` overrides ``Entity``'s
+# with a plain ``@property`` — leaving the two bases declaring the same name in
+# incompatible ways. Our overrides use ``@property`` to match the dynamic
+# semantics that ``CoordinatorEntity`` already relies on; using
+# ``@cached_property`` here would cache values across coordinator updates and
+# break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
+# the same dynamic-property pattern. The variance error is structurally
+# unavoidable from this side of the HA boundary.
+
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from aioratio.models import ChargerOverview
 from aioratio.models.diagnostics import ChargerDiagnostics
@@ -228,12 +240,11 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
-class RatioDiagnosticBinarySensor(
+class RatioDiagnosticBinarySensor(  # pyright: ignore[reportIncompatibleVariableOverride]
     CoordinatorEntity[RatioCoordinator], BinarySensorEntity
 ):
     """A diagnostic binary sensor reading ChargerDiagnostics data."""
 
-    entity_description: RatioDiagnosticBinarySensorDescription
     _attr_has_entity_name = True
 
     def __init__(
@@ -254,22 +265,24 @@ class RatioDiagnosticBinarySensor(
         )
 
     @property
-    def is_on(self) -> bool | None:
+    def is_on(self) -> bool | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return None
         diag = self.coordinator.data.diagnostics.get(self._serial)
         if diag is None:
             return None
+        desc = cast(RatioDiagnosticBinarySensorDescription, self.entity_description)
         try:
-            return self.entity_description.value_fn(diag)
+            return desc.value_fn(diag)
         except AttributeError:
             return None
 
 
-class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity):
+class RatioBinarySensor(  # pyright: ignore[reportIncompatibleVariableOverride]
+    CoordinatorEntity[RatioCoordinator], BinarySensorEntity
+):
     """A single binary sensor backed by the Ratio coordinator."""
 
-    entity_description: RatioBinarySensorEntityDescription
     _attr_has_entity_name = True
 
     def __init__(
@@ -290,20 +303,22 @@ class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity)
         )
 
     @property
-    def is_on(self) -> bool | None:
+    def is_on(self) -> bool | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return None
         ov = self.coordinator.data.chargers.get(self._serial)
         if ov is None:
             return None
+        desc = cast(RatioBinarySensorEntityDescription, self.entity_description)
         try:
-            return self.entity_description.value_fn(ov)
+            return desc.value_fn(ov)
         except AttributeError:
             return None
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
-        attrs_fn = self.entity_description.attrs_fn
+    def extra_state_attributes(self) -> dict[str, Any] | None:  # pyright: ignore[reportIncompatibleVariableOverride]
+        desc = cast(RatioBinarySensorEntityDescription, self.entity_description)
+        attrs_fn = desc.attrs_fn
         if attrs_fn is None or self.coordinator.data is None:
             return None
         ov = self.coordinator.data.chargers.get(self._serial)

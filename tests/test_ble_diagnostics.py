@@ -12,6 +12,20 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.ratio.const import CONF_BLE_ENABLED_SERIALS, DOMAIN
 from custom_components.ratio.diagnostics import async_get_config_entry_diagnostics
 
+from typing import Any, cast
+
+
+def _r(result: object) -> dict[str, Any]:
+    """Cast a ``ConfigFlowResult`` TypedDict to ``dict[str, Any]`` for indexing.
+
+    Pyright marks every key in HA's ``ConfigFlowResult`` as ``NotRequired``,
+    so direct indexing trips ``reportTypedDictNotRequiredAccess`` everywhere
+    in test files. This helper centralizes the boundary cast.
+    """
+    return cast(dict[str, Any], result)
+
+
+
 SERIAL = "SN001"
 MAC = "AA:BB:CC:DD:EE:FF"
 
@@ -126,7 +140,7 @@ async def test_bond_issue_dismissed_on_disable(hass: HomeAssistant) -> None:
     entry = _make_cloud_entry_with_ble(hass, [SERIAL], ble_coord)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] == FlowResultType.FORM
+    assert _r(result)["type"] == FlowResultType.FORM
 
     # Submit with serial unchecked (False).
     result = await hass.config_entries.options.async_configure(
@@ -134,7 +148,7 @@ async def test_bond_issue_dismissed_on_disable(hass: HomeAssistant) -> None:
         user_input={SERIAL: False},
     )
 
-    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert _r(result)["type"] == FlowResultType.CREATE_ENTRY
     ble_coord.async_dismiss_bond_issue.assert_awaited_once()
 
 
@@ -145,7 +159,7 @@ async def test_bond_issue_not_dismissed_when_kept_enabled(hass: HomeAssistant) -
     entry = _make_cloud_entry_with_ble(hass, [SERIAL], ble_coord)
 
     result = await hass.config_entries.options.async_init(entry.entry_id)
-    assert result["type"] == FlowResultType.FORM
+    assert _r(result)["type"] == FlowResultType.FORM
 
     # Submit with serial kept checked (True).
     result = await hass.config_entries.options.async_configure(
@@ -153,5 +167,5 @@ async def test_bond_issue_not_dismissed_when_kept_enabled(hass: HomeAssistant) -
         user_input={SERIAL: True},
     )
 
-    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert _r(result)["type"] == FlowResultType.CREATE_ENTRY
     ble_coord.async_dismiss_bond_issue.assert_not_awaited()

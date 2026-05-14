@@ -280,6 +280,7 @@ async def test_add_vehicle_returns_vehicle_id_in_response(
     )
 
     assert response == {"vehicle_id": "v-new"}
+    assert client.add_vehicle.await_args is not None
     sent: Vehicle = client.add_vehicle.await_args.args[0]
     assert sent.vehicle_name == "Tesla"
     assert sent.license_plate == "AB-12-CD"
@@ -401,6 +402,7 @@ async def test_import_session_history_imports_for_window(
 
     assert response == {"imported": {"SN-IMP": 2}}
     mock_import_window.assert_awaited_once()
+    assert mock_import_window.await_args is not None
     call_kwargs = mock_import_window.await_args.kwargs
     assert int(call_kwargs["begin_time"].timestamp()) == int(begin_dt.timestamp())
     assert int(call_kwargs["end_time"].timestamp()) == int(end_dt.timestamp())
@@ -454,6 +456,7 @@ async def test_history_coordinator_async_import_window(
 
     assert result == {serial: 1}
     call = client.session_history.await_args
+    assert call is not None
     assert call.kwargs["serial_number"] == serial
     assert call.kwargs["begin_time"] == int(begin.timestamp())
     assert call.kwargs["end_time"] == int(end.timestamp())

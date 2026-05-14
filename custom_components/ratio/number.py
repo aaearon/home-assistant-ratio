@@ -2,6 +2,19 @@
 
 from __future__ import annotations
 
+
+# Note on ``# pyright: ignore[reportIncompatibleVariableOverride]`` below:
+# HA's ``Entity`` base declares ``available`` (and platform classes declare
+# ``is_on``/``native_value``/``options``/``current_option``/``extra_state_attributes``/etc.)
+# as ``cached_property``. ``CoordinatorEntity.available`` overrides ``Entity``'s
+# with a plain ``@property`` — leaving the two bases declaring the same name in
+# incompatible ways. Our overrides use ``@property`` to match the dynamic
+# semantics that ``CoordinatorEntity`` already relies on; using
+# ``@cached_property`` here would cache values across coordinator updates and
+# break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
+# the same dynamic-property pattern. The variance error is structurally
+# unavoidable from this side of the HA boundary.
+
 import logging
 from dataclasses import replace
 from typing import Any
@@ -124,25 +137,25 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
     # ---- properties ----
 
     @property
-    def available(self) -> bool:
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
         return super().available and self._settings() is not None
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         lim = self._limit()
         if lim is None:
             return None
         return lim.value
 
     @property
-    def native_min_value(self) -> float:
+    def native_min_value(self) -> float:  # pyright: ignore[reportIncompatibleVariableOverride]
         lim = self._limit()
         if lim is not None and lim.lower is not None:
             return lim.lower
         return self._default_min
 
     @property
-    def native_max_value(self) -> float:
+    def native_max_value(self) -> float:  # pyright: ignore[reportIncompatibleVariableOverride]
         lim = self._limit()
         if lim is not None and lim.upper is not None:
             return lim.upper
@@ -169,7 +182,17 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
             new_field = replace(existing, value=value)
         else:
             new_field = UpperLowerLimitSetting(value=value)
-        modified = replace(current, **{self._field: new_field})
+        match self._field:
+            case "sun_on_delay_minutes":
+                modified = replace(current, sun_on_delay_minutes=new_field)
+            case "sun_off_delay_minutes":
+                modified = replace(current, sun_off_delay_minutes=new_field)
+            case "pure_solar_starting_current":
+                modified = replace(current, pure_solar_starting_current=new_field)
+            case "smart_solar_starting_current":
+                modified = replace(current, smart_solar_starting_current=new_field)
+            case _:
+                raise ValueError(f"Unknown solar field: {self._field}")
         await self.coordinator.request_command(
             self._client.set_solar_settings, self._serial, modified
         )
@@ -187,7 +210,13 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
             new_field = replace(existing, value=value)
         else:
             new_field = UpperLowerLimitSetting(value=value)
-        modified = replace(current, **{self._field: new_field})  # type: ignore[arg-type]
+        match self._field:
+            case "maximum_charging_current":
+                modified = replace(current, maximum_charging_current=new_field)
+            case "minimum_charging_current":
+                modified = replace(current, minimum_charging_current=new_field)
+            case _:
+                raise ValueError(f"Unknown user field: {self._field}")
         await self.coordinator.request_command(
             self._client.set_user_settings, self._serial, modified
         )

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aioratio.models import UserSettings, Vehicle
-from aioratio.models.settings import EnumValue
+from aioratio.models.settings import ChargeModeSettings
 
 from custom_components.ratio.coordinator import RatioData
 from custom_components.ratio.select import (
@@ -78,7 +78,7 @@ def test_unique_vehicle_names_not_disambiguated() -> None:
 def test_charge_mode_options_from_settings() -> None:
     """Options should come from user settings charging_mode allowed_values."""
     us = UserSettings(
-        charging_mode=EnumValue(
+        charging_mode=ChargeModeSettings(
             value="Smart",
             allowed_values=["Smart", "SmartSolar", "PureSolar"],
         ),
@@ -116,7 +116,7 @@ def test_charge_mode_fallback_when_data_is_none() -> None:
 async def test_charge_mode_select_option() -> None:
     """Selecting a charge mode option should call set_user_settings."""
     us = UserSettings(
-        charging_mode=EnumValue(
+        charging_mode=ChargeModeSettings(
             value="Smart",
             allowed_values=["Smart", "SmartSolar", "PureSolar"],
         ),

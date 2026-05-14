@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -136,7 +136,7 @@ def mock_config_entry(hass) -> MockConfigEntry:
 @pytest.fixture
 async def setup_integration(
     hass, mock_config_entry, mock_ratio_client
-) -> MockConfigEntry:
+) -> AsyncGenerator[MockConfigEntry, None]:
     """Set up the Ratio integration via the real async_setup_entry path.
 
     After this fixture completes, ``entry.runtime_data`` contains the
