@@ -97,8 +97,10 @@ async def test_bluetooth_step_aborts_cloud_account_required(
 
 
 @pytest.mark.asyncio
-async def test_bluetooth_step_aborts_already_configured(hass: HomeAssistant) -> None:
-    """Serial already in ble_enabled_serials → already_configured."""
+async def test_bluetooth_step_aborts_ble_already_configured(
+    hass: HomeAssistant,
+) -> None:
+    """Serial already in ble_enabled_serials → ble_already_configured."""
     from aioratio.ble.discovery import RatioAdvertisement
 
     serial = "P12345678901234"
@@ -119,7 +121,8 @@ async def test_bluetooth_step_aborts_already_configured(hass: HomeAssistant) -> 
         )
 
     assert result["type"] == FlowResultType.ABORT
-    assert result["reason"] == "already_configured"
+    assert result["reason"] == "ble_already_configured"
+    assert result["description_placeholders"] == {"serial": serial}
 
 
 @pytest.mark.asyncio

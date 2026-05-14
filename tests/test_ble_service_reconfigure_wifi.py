@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioratio.ble.models.wifi import WifiAccessPoint
-from aioratio.exceptions import RatioBleConnectionError
+from aioratio.exceptions import RatioBleConnectionError, RatioBleError
+from bleak.exc import BleakError
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import device_registry as dr
@@ -91,7 +92,7 @@ async def test_reconfigure_wifi_no_password(
     device_registry: dr.DeviceRegistry,
     setup_integration: MockConfigEntry,
 ) -> None:
-    """When password is omitted, wifi_connect is called with empty string."""
+    """When password is omitted, wifi_connect is called with None (open network)."""
     entry = setup_integration
     device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -118,7 +119,7 @@ async def test_reconfigure_wifi_no_password(
             blocking=True,
         )
 
-    ble_client.wifi_connect.assert_awaited_once_with("OpenNet", "")
+    ble_client.wifi_connect.assert_awaited_once_with("OpenNet", None)
 
 
 @pytest.mark.asyncio
@@ -215,12 +216,22 @@ async def test_reconfigure_wifi_ble_not_enabled_empty_dict(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "exc",
+    [
+        RatioBleConnectionError("timeout"),
+        RatioBleError("protocol error"),
+        BleakError("bleak failure"),
+    ],
+    ids=["RatioBleConnectionError", "RatioBleError", "BleakError"],
+)
 async def test_reconfigure_wifi_connect_failed(
     hass: HomeAssistant,
     device_registry: dr.DeviceRegistry,
     setup_integration: MockConfigEntry,
+    exc: Exception,
 ) -> None:
-    """RatioBleConnectionError from wifi_connect raises ServiceValidationError(ble_connect_failed)."""
+    """BLE errors from wifi_connect surface as ServiceValidationError(ble_connect_failed)."""
     entry = setup_integration
     device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -230,7 +241,7 @@ async def test_reconfigure_wifi_connect_failed(
     ble_coord = _make_ble_coordinator("SN006")
     ble_client = _make_ble_client_mock(
         scan_result=[_make_wifi_ap("TargetNet")],
-        connect_side_effect=RatioBleConnectionError("timeout"),
+        connect_side_effect=exc,
     )
     entry.runtime_data.ble_coordinators = {"SN006": ble_coord}
 

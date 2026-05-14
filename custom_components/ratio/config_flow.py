@@ -182,7 +182,10 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="cloud_account_required")
 
         if serial in entry.options.get(CONF_BLE_ENABLED_SERIALS, []):
-            return self.async_abort(reason="already_configured")
+            return self.async_abort(
+                reason="ble_already_configured",
+                description_placeholders={"serial": serial},
+            )
 
         self.context["title_placeholders"] = {"name": f"Ratio Charger {serial}"}
         return await self.async_step_bluetooth_confirm()
