@@ -450,6 +450,157 @@ async def test_recovery_skipped_when_sessions_already_persisted(
 
 
 @pytest.mark.asyncio
+async def test_idle_polls_do_not_shrink_fetch_window_past_session_begin(
+    hass: HomeAssistant, freezer
+) -> None:
+    """Regression for #26: an idle stretch of empty polls must not advance the
+    cursor past the begin time of a session that hasn't ended yet.
+
+    Hazard scenario (overnight charge):
+
+    1. A prior session has been imported; cursor anchored at its end time.
+    2. Car is plugged in at T+1000s; charges for ~9 hours.
+    3. ``session_history`` returns no completed sessions during the charge.
+    4. Car is unplugged. Cloud surfaces the now-completed session whose
+       ``begin = T+1000``.
+
+    Before the fix, ``_async_update_data`` advanced ``_last_imported_end_time``
+    to ``now_ts`` on every empty poll. The next poll then asked the cloud for
+    sessions starting from ``now_ts - HISTORY_OVERLAP_SECONDS`` (≈ 1 hour) —
+    and the just-completed session began ~9 hours earlier, outside that
+    window, so it was never fetched. Sensors stayed stuck on the previous
+    session until the user removed and re-added the integration.
+    """
+    serial = "S_LONG_IDLE"
+    entry = _make_entry(hass, entry_id="e_long_idle")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    T = 1_700_000_000
+    # Step 1: import a prior session so the cursor is anchored at T+600.
+    s_old = _session("old", serial, T, energy=1000)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s_old], next_token=None)
+    )
+    freezer.move_to(dt_util.utc_from_timestamp(T + 800))
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+    assert coord._last_imported_end_time[serial] == T + 600
+
+    # Step 2-3: ~9 hours of idle polls during a charging session that the
+    # cloud does not yet expose (session_history returns []).
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[], next_token=None)
+    )
+    for offset in (3600, 7200, 10800, 14400, 18000, 21600, 25200, 28800, 32400):
+        freezer.move_to(dt_util.utc_from_timestamp(T + 1000 + offset))
+        with _patch_import():
+            await coord.async_refresh()
+
+    # Step 4: car unplugged, cloud surfaces the now-completed session.
+    new_session = Session(
+        session_id="new",
+        charger_serial_number=serial,
+        total_charging_energy=10000,
+        begin=TimeData(time=T + 1000),
+        end=TimeData(time=T + 33000),
+    )
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[new_session], next_token=None)
+    )
+    freezer.move_to(dt_util.utc_from_timestamp(T + 34000))
+
+    with _patch_import() as mock_import:
+        await coord.async_refresh()
+
+    # The poll's begin_time MUST be wide enough to include the new session's
+    # begin (T+1000). With the old "advance to now" branch the begin_time
+    # would have been ~now-1h, missing the session entirely.
+    last_call = client.session_history.await_args_list[-1]
+    assert last_call.kwargs["begin_time"] <= T + 1000, (
+        f"begin_time {last_call.kwargs['begin_time']} excludes session.begin "
+        f"{T + 1000} — bug #26 has regressed"
+    )
+    # And the session must actually be imported.
+    assert mock_import.await_count == 1
+    args = mock_import.await_args_list[0].args
+    assert [s.session_id for s in args[2]] == ["new"]
+    # Cursor advances to the new session's end.
+    assert coord._last_imported_end_time[serial] == T + 33000
+
+
+@pytest.mark.asyncio
+async def test_load_clamps_cursor_advanced_past_persisted_session_ends(
+    hass: HomeAssistant,
+) -> None:
+    """Self-heal for installs already affected by #26.
+
+    Existing affected installs have ``_last_imported_end_time`` advanced
+    arbitrarily far into the future relative to any actual imported session,
+    because the previous "advance to now on empty poll" branch persisted
+    that drift. After upgrading to the fixed code those installs would still
+    be stuck — the cursor on disk is too high and the next poll's window
+    too narrow — unless we clamp it back on load.
+
+    Clamp rule: ``_last_imported_end_time[serial]`` must not exceed the
+    largest end time in ``_persisted_sessions[serial]``. If the cursor is
+    higher, snap it back to that latest end time. The dedup ``_seen_ids``
+    set means we won't re-import sessions, just re-fetch the same window.
+    """
+    serial = "S_CLAMP"
+    entry = _make_entry(hass, entry_id="e_clamp")
+    main = _make_main_coordinator([serial])
+
+    # Seed a normal storage shape via a real first refresh.
+    s_old = _session("old", serial, 1_700_000_000, energy=1000)
+    seed_client = MagicMock()
+    seed_client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s_old], next_token=None)
+    )
+    seed_coord = RatioHistoryCoordinator(hass, seed_client, entry, main)
+    with _patch_import():
+        await seed_coord.async_config_entry_first_refresh()
+    assert s_old.end is not None
+    actual_end = s_old.end.time
+    assert actual_end is not None
+
+    # Manually advance the persisted cursor far past the actual session end,
+    # mimicking the drift the old "advance to now" branch produced.
+    drifted = actual_end + 7 * 86400  # +7 days
+    from homeassistant.helpers.storage import Store  # noqa: PLC0415
+
+    from custom_components.ratio.const import STORAGE_VERSION  # noqa: PLC0415
+    from custom_components.ratio.coordinator import (  # noqa: PLC0415
+        STORAGE_KEY_HISTORY,
+    )
+
+    store: Store = Store(
+        hass,
+        STORAGE_VERSION,
+        f"{DOMAIN}.{entry.entry_id}.{STORAGE_KEY_HISTORY}",
+    )
+    raw = await store.async_load()
+    assert isinstance(raw, dict)
+    raw["last_imported_end_time"][serial] = drifted
+    await store.async_save(raw)
+
+    # Fresh coordinator on the same entry: load must clamp the cursor back
+    # to the latest persisted session end.
+    client = MagicMock()
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+    await coord.async_load()
+
+    assert coord._last_imported_end_time[serial] == actual_end, (
+        f"cursor not clamped: {coord._last_imported_end_time[serial]} "
+        f"!= {actual_end}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_recovery_skipped_when_seen_ids_empty(hass: HomeAssistant) -> None:
     """No recovery wide-fetch on a brand-new entry with no prior state.
 

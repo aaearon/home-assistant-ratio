@@ -454,6 +454,20 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                             with contextlib.suppress(Exception):
                                 parsed.append(Session.from_dict(raw_s))
                     self._persisted_sessions[str(serial_key)] = parsed
+        # Self-heal for installs already affected by issue #26: pre-fix
+        # versions advanced ``_last_imported_end_time`` to ``now`` on empty
+        # polls, drifting the cursor arbitrarily far past any actual session.
+        # Snap it back to the latest persisted session end so the next poll's
+        # overlap window is anchored to real data, not stale drift.
+        for serial, sessions in self._persisted_sessions.items():
+            if not sessions:
+                continue
+            latest_end = max(
+                (int(s.end.time) for s in sessions if s.end and s.end.time),
+                default=0,
+            )
+            if latest_end and self._last_imported_end_time.get(serial, 0) > latest_end:
+                self._last_imported_end_time[serial] = latest_end
         self._loaded = True
 
     async def _recover_missing_sessions(self, serials: list[str]) -> None:
@@ -660,7 +674,12 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                     new_sessions,
                     self._running_total.get(serial, 0.0),
                 )
-                # Update last_imported_end_time to the latest end (or begin) seen.
+                # Anchor the cursor to the latest actual session end. We never
+                # advance past data we've imported — see issue #26: an empty
+                # poll during a long charging session must not shrink the next
+                # fetch window past the in-progress session's begin time, or
+                # the completed session would fall outside the overlap window
+                # forever.
                 latest_end = max(
                     (
                         s.end.time if s.end and s.end.time else _session_begin(s)
@@ -670,12 +689,6 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                 )
                 self._last_imported_end_time[serial] = max(
                     self._last_imported_end_time.get(serial, 0), int(latest_end)
-                )
-            else:
-                # Advance to now even when no new sessions so the next poll
-                # uses a fresh window rather than re-fetching the same range.
-                self._last_imported_end_time[serial] = max(
-                    self._last_imported_end_time.get(serial, 0), now_ts
                 )
 
             # Cap dedup IDs (FIFO).
