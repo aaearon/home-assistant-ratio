@@ -55,7 +55,7 @@ async def test_bluetooth_step_aborts_not_supported(hass: HomeAssistant) -> None:
     service_info = _make_service_info("SOME_OTHER_DEVICE")
 
     with patch(
-        "custom_components.ratio.config_flow.parse_ble_service_info",
+        "custom_components.ratio.config_flow.parse_advertisement",
         return_value=None,
     ):
         result = await hass.config_entries.flow.async_init(
@@ -81,7 +81,7 @@ async def test_bluetooth_step_aborts_cloud_account_required(
     _make_cloud_entry(hass, serial="P12345678901234")
 
     with patch(
-        "custom_components.ratio.config_flow.parse_ble_service_info",
+        "custom_components.ratio.config_flow.parse_advertisement",
         return_value=RatioAdvertisement(
             local_name="RATIO_P99999999999999", manufacturer_byte=3
         ),
@@ -107,7 +107,7 @@ async def test_bluetooth_step_aborts_already_configured(hass: HomeAssistant) -> 
     _make_cloud_entry(hass, serial=serial, ble_serials=[serial])
 
     with patch(
-        "custom_components.ratio.config_flow.parse_ble_service_info",
+        "custom_components.ratio.config_flow.parse_advertisement",
         return_value=RatioAdvertisement(
             local_name=f"RATIO_{serial}", manufacturer_byte=3
         ),
@@ -134,7 +134,7 @@ async def test_bluetooth_confirm_enables_ble(hass: HomeAssistant) -> None:
     cloud_entry = _make_cloud_entry(hass, serial=serial, ble_serials=[])
 
     with patch(
-        "custom_components.ratio.config_flow.parse_ble_service_info",
+        "custom_components.ratio.config_flow.parse_advertisement",
         return_value=RatioAdvertisement(
             local_name=f"RATIO_{serial}", manufacturer_byte=3
         ),
