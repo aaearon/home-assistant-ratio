@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -13,8 +14,6 @@ from homeassistant.data_entry_flow import FlowResultType
 
 from custom_components.ratio.const import DOMAIN
 
-from typing import Any, cast
-
 
 def _r(result: object) -> dict[str, Any]:
     """Cast a ``ConfigFlowResult`` TypedDict to ``dict[str, Any]`` for indexing.
@@ -24,8 +23,6 @@ def _r(result: object) -> dict[str, Any]:
     in test files. This helper centralizes the boundary cast.
     """
     return cast(dict[str, Any], result)
-
-
 
 
 @pytest.mark.asyncio

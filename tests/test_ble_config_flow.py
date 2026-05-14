@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,8 +13,6 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.ratio.const import CONF_BLE_ENABLED_SERIALS, DOMAIN
 
-from typing import Any, cast
-
 
 def _r(result: object) -> dict[str, Any]:
     """Cast a ``ConfigFlowResult`` TypedDict to ``dict[str, Any]`` for indexing.
@@ -23,8 +22,6 @@ def _r(result: object) -> dict[str, Any]:
     in test files. This helper centralizes the boundary cast.
     """
     return cast(dict[str, Any], result)
-
-
 
 
 def _make_service_info(name: str, address: str = "AA:BB:CC:DD:EE:FF") -> MagicMock:

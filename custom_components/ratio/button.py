@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 # Note on ``# pyright: ignore[reportIncompatibleVariableOverride]`` below:
 # HA's ``Entity`` base declares ``available`` (and platform classes declare
 # ``is_on``/``native_value``/``options``/``current_option``/``extra_state_attributes``/etc.)
@@ -14,7 +13,6 @@ from __future__ import annotations
 # break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
 # the same dynamic-property pattern. The variance error is structurally
 # unavoidable from this side of the HA boundary.
-
 import logging
 
 from aioratio import RatioClient

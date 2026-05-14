@@ -13,7 +13,6 @@ from __future__ import annotations
 # break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
 # the same dynamic-property pattern. The variance error is structurally
 # unavoidable from this side of the HA boundary.
-
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, cast
@@ -240,7 +239,9 @@ async def async_setup_entry(
     entry.async_on_unload(coordinator.async_add_listener(_add_new))
 
 
-class RatioDiagnosticBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity):
+class RatioDiagnosticBinarySensor(
+    CoordinatorEntity[RatioCoordinator], BinarySensorEntity
+):
     """A diagnostic binary sensor reading ChargerDiagnostics data."""
 
     _attr_has_entity_name = True
@@ -301,6 +302,10 @@ class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity)
             name=f"Ratio {serial}",
             serial_number=serial,
         )
+
+    @property
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        return super().available
 
     @property
     def is_on(self) -> bool | None:  # pyright: ignore[reportIncompatibleVariableOverride]
