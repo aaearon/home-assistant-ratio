@@ -12,7 +12,6 @@ from aioratio.exceptions import (
     RatioBleError,
     RatioBleNotBondedError,
 )
-from bleak import BleakClient
 from bleak.exc import BleakError
 from bleak.backends.device import BLEDevice
 from homeassistant.components.bluetooth import (
@@ -150,43 +149,20 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             async with client:
                 resp = await client.get_charger_sensor_values()
         except RatioBleNotBondedError as bond_exc:
-            # Log scanner routing so reporters can tell whether the failure
-            # came via a local BlueZ adapter or an ESPHome BT proxy — the two
-            # paths have different pairing semantics.
+            # aioratio>=0.10.2 already pairs-and-retries on the same connection
+            # before raising this. If we still see it, the bond cannot be
+            # established (charger rejected SMP, proxy lacks PAIRING feature
+            # flag, etc.) — surface as a repair issue and give up the poll.
             source, is_proxy = _scanner_info(self.hass, self.address)
-            _LOGGER.debug(
-                "BLE bond-required for %s (scanner=%s, proxy=%s): %s",
+            _LOGGER.warning(
+                "BLE bond unrecoverable for %s (scanner=%s, proxy=%s): %s",
                 self.address,
                 source,
                 is_proxy,
                 bond_exc,
             )
-            # Try OS-level bonding once (Ember Mug pattern). BlueZ stores the
-            # bond so subsequent connections skip this branch entirely.
-            if await self._try_pair():
-                try:
-                    device = self._pick_best_device()
-                    if device is None:
-                        # Device went out of range between pairing and re-fetch.
-                        raise UpdateFailed(
-                            f"Charger {self.serial} not advertising after pairing"
-                        )
-                    client = BleClient(device)
-                    async with client:
-                        resp = await client.get_charger_sensor_values()
-                except (
-                    RatioBleNotBondedError,
-                    RatioBleConnectionError,
-                    RatioBleError,
-                    BleakError,
-                ) as e:
-                    self._fire_bond_issue()
-                    raise UpdateFailed(str(e)) from e
-            else:
-                self._fire_bond_issue()
-                raise UpdateFailed(
-                    f"Charger {self.serial} is not bonded and pairing failed"
-                ) from None
+            self._fire_bond_issue()
+            raise UpdateFailed(str(bond_exc)) from bond_exc
         except (RatioBleConnectionError, RatioBleError) as e:
             raise UpdateFailed(str(e)) from e
         except BleakError as e:
@@ -213,65 +189,6 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             translation_key="ble_not_bonded",
             translation_placeholders={"serial": self.serial},
         )
-
-    async def _try_pair(self) -> bool:
-        """Attempt OS-level bonding via bleak. Returns True if successful.
-
-        BlueZ persists the bond to disk; once bonded, the charger's ATT
-        authentication check passes and subsequent connections skip this path.
-        ESPHome BT proxies expose ``pair()`` via the PAIRING feature flag
-        (firmware 2024.6+, ``active: true``); when the proxy lacks that flag
-        ``bleak`` raises ``NotImplementedError``.
-        """
-        device = self._pick_best_device()
-        source, is_proxy = _scanner_info(self.hass, self.address)
-        _LOGGER.debug(
-            "Attempting BLE pair for %s via scanner=%s (proxy=%s)",
-            self.address,
-            source,
-            is_proxy,
-        )
-        if device is None:
-            _LOGGER.warning(
-                "BLE pair for %s aborted: device not advertising "
-                "(scanner=%s, proxy=%s)",
-                self.address,
-                source,
-                is_proxy,
-            )
-            return False
-        try:
-            async with BleakClient(device, timeout=15) as raw:
-                # bleak >=1.0 made pair() return None — failures raise. The
-                # bleak_esphome backend's bool return value is swallowed by
-                # the wrapper, so we cannot detect a proxy-reported
-                # paired=False from here. That branch logs at ERROR inside
-                # ``bleak_esphome.backend.client`` directly; surface it by
-                # enabling DEBUG for that logger.
-                await raw.pair()
-        except NotImplementedError as exc:
-            _LOGGER.warning(
-                "BLE pair for %s raised NotImplementedError "
-                "(scanner=%s, proxy=%s): %s. ESPHome BT proxies need "
-                "firmware 2024.6+ with `bluetooth_proxy: active: true`.",
-                self.address,
-                source,
-                is_proxy,
-                exc,
-            )
-            return False
-        except (BleakError, TimeoutError, OSError) as exc:
-            _LOGGER.warning(
-                "BLE pair for %s failed (scanner=%s, proxy=%s): %s: %s",
-                self.address,
-                source,
-                is_proxy,
-                type(exc).__name__,
-                exc,
-            )
-            _LOGGER.debug("BLE pair traceback for %s", self.address, exc_info=exc)
-            return False
-        return True
 
     async def async_dismiss_bond_issue(self) -> None:
         async_delete_issue(self.hass, DOMAIN, f"ble_not_bonded_{self.serial}")

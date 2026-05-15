@@ -49,7 +49,6 @@ from aioratio.exceptions import (  # noqa: E402
     RatioBleConnectionError,
     RatioBleNotBondedError,
 )
-from bleak.exc import BleakError  # noqa: E402
 from homeassistant.core import HomeAssistant  # noqa: E402
 from homeassistant.helpers.issue_registry import IssueSeverity  # noqa: E402
 from homeassistant.helpers.update_coordinator import UpdateFailed  # noqa: E402
@@ -166,25 +165,16 @@ async def test_ble_snapshot_populated(hass: HomeAssistant) -> None:
     assert snapshot.protocol_version == 2
 
 
-def _make_raw_bleak_client_mock(*, pair_result: object = True) -> MagicMock:
-    """Build a ``BleakClient`` mock for the raw-bleak path in ``_try_pair``.
-
-    ``pair_result`` is either a bool (RPC return value) or an Exception
-    instance (raised by ``pair()``).
-    """
-    raw = MagicMock()
-    raw.__aenter__ = AsyncMock(return_value=raw)
-    raw.__aexit__ = AsyncMock(return_value=None)
-    if isinstance(pair_result, Exception):
-        raw.pair = AsyncMock(side_effect=pair_result)
-    else:
-        raw.pair = AsyncMock(return_value=pair_result)
-    return raw
-
-
 @pytest.mark.asyncio
 async def test_bond_error_creates_repair_issue(hass: HomeAssistant) -> None:
-    """RatioBleNotBondedError + failed pair should create a HA repair issue."""
+    """A ``RatioBleNotBondedError`` from ``aioratio`` raises ``UpdateFailed``
+    and creates a HA repair issue.
+
+    aioratio>=0.10.2 already pairs-and-retries on the same connection before
+    surfacing this exception. Seeing it here means the bond cannot be
+    established — there is nothing useful left for the coordinator to do
+    except mark the integration broken so the user sees actionable steps.
+    """
     ble_client = MagicMock()
     ble_client.__aenter__ = AsyncMock(return_value=ble_client)
     ble_client.__aexit__ = AsyncMock(return_value=None)
@@ -193,10 +183,6 @@ async def test_bond_error_creates_repair_issue(hass: HomeAssistant) -> None:
     )
     service_info = _make_service_info()
     ble_device = MagicMock()
-    # pair() raises BleakError — the most common bonding failure on BlueZ.
-    raw_bleak = _make_raw_bleak_client_mock(
-        pair_result=BleakError("Authentication Failed")
-    )
 
     coord = _make_coordinator(hass)
 
@@ -206,7 +192,6 @@ async def test_bond_error_creates_repair_issue(hass: HomeAssistant) -> None:
             return_value=ble_device,
         ),
         patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
-        patch("custom_components.ratio.ble.BleakClient", return_value=raw_bleak),
         patch("custom_components.ratio.ble.async_create_issue") as mock_create_issue,
         pytest.raises(UpdateFailed),
     ):
@@ -277,99 +262,6 @@ async def test_cloud_coordinator_data_untouched(hass: HomeAssistant) -> None:
     assert isinstance(snapshot, BleSnapshot)
     assert cloud_coord.data is sentinel.cloud_data
     cloud_coord.async_set_updated_data.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_try_pair_returns_true_when_pair_completes(hass: HomeAssistant) -> None:
-    """A successful ``pair()`` (None return on bleak >=1.0) yields True.
-
-    Documents the public contract: in bleak >=1.0 ``BleakClient.pair()`` is
-    typed as ``-> None`` and signals failure by raising. The integration must
-    treat a clean exit from the ``async with`` block as success.
-    """
-    ble_device = MagicMock()
-    raw_bleak = _make_raw_bleak_client_mock(pair_result=None)
-    coord = _make_coordinator(hass)
-
-    with (
-        patch(
-            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
-            return_value=ble_device,
-        ),
-        patch("custom_components.ratio.ble.BleakClient", return_value=raw_bleak),
-    ):
-        result = await coord._try_pair()
-
-    assert result is True
-
-
-@pytest.mark.asyncio
-async def test_try_pair_logs_firmware_hint_on_not_implemented(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
-) -> None:
-    """``NotImplementedError`` from bleak_esphome must log the firmware hint.
-
-    bleak_esphome raises ``NotImplementedError`` from ``pair()`` when the
-    proxy lacks the PAIRING feature flag (firmware < 2024.6 or
-    ``active: false``). The log must point the user at the firmware fix.
-    """
-    import logging
-
-    ble_device = MagicMock()
-    raw_bleak = _make_raw_bleak_client_mock(
-        pair_result=NotImplementedError(
-            "Pairing is not available in this version ESPHome"
-        )
-    )
-    coord = _make_coordinator(hass)
-
-    with (
-        patch(
-            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
-            return_value=ble_device,
-        ),
-        patch("custom_components.ratio.ble.BleakClient", return_value=raw_bleak),
-        caplog.at_level(logging.WARNING, logger="custom_components.ratio.ble"),
-    ):
-        result = await coord._try_pair()
-
-    assert result is False
-    combined = "\n".join(record.message for record in caplog.records)
-    assert "bluetooth_proxy" in combined
-    assert "2024.6" in combined
-
-
-@pytest.mark.asyncio
-async def test_try_pair_logs_bleak_error_with_class_name(
-    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A BleakError from ``pair()`` must log the concrete exception class.
-
-    The class name is the diagnostic — bare ``BleakError`` covers a wide
-    range of underlying causes (BlueZ DBus, ESPHome API failure, timeout).
-    """
-    import logging
-
-    ble_device = MagicMock()
-    raw_bleak = _make_raw_bleak_client_mock(
-        pair_result=BleakError("Authentication Failed (0x05)")
-    )
-    coord = _make_coordinator(hass)
-
-    with (
-        patch(
-            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
-            return_value=ble_device,
-        ),
-        patch("custom_components.ratio.ble.BleakClient", return_value=raw_bleak),
-        caplog.at_level(logging.WARNING, logger="custom_components.ratio.ble"),
-    ):
-        result = await coord._try_pair()
-
-    assert result is False
-    combined = "\n".join(record.message for record in caplog.records)
-    assert "BleakError" in combined
-    assert "Authentication Failed" in combined
 
 
 def test_scanner_info_detects_remote_proxy_scanner() -> None:
