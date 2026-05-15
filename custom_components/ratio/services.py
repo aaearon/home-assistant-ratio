@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 from aioratio import BleClient, RatioClient
+from aioratio.ble import parse_advertisement
 from aioratio.exceptions import (
     RatioApiError,
     RatioBleConnectionError,
@@ -466,9 +467,14 @@ async def _handle_ble_probe(hass: HomeAssistant, call: ServiceCall) -> ServiceRe
 
     # ``_info`` holds the raw service info (used to construct ``BleClient``);
     # ``meta`` is the user-visible subset that lands in the response.
+    # Filter on both ``local_name`` AND Ratio manufacturer data (CIC 0x0BFF)
+    # so a device merely spoofing the name cannot be the chosen connection
+    # target.
     candidates: list[tuple[BluetoothServiceInfoBleak, dict[str, JsonValueType]]] = []
     for info in async_discovered_service_info(hass, connectable=True):
         if info.name != local_name:
+            continue
+        if parse_advertisement(info.name, info.manufacturer_data) is None:
             continue
         scanner = getattr(info.device, "scanner", None)
         scanner_class = type(scanner).__name__ if scanner is not None else None
