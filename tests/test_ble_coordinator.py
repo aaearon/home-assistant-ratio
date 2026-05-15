@@ -106,11 +106,15 @@ def _make_service_info(
     name: str | None = "RATIO_SN001",
     rssi: int = -70,
     source: str = "00:11:22:33:44:55",
+    manufacturer_data: dict[int, bytes] | None = None,
 ) -> MagicMock:
     """Build a fake BluetoothServiceInfoBleak.
 
     Defaults match the canonical test serial ``SN001`` so the coordinator's
-    ``RATIO_{serial}`` matcher accepts it.
+    ``RATIO_{serial}`` matcher accepts it. ``manufacturer_data`` defaults to a
+    valid Ratio payload (``ADVERT_MANUFACTURER_ID = 0x0BFF``) so candidates
+    pass ``parse_advertisement`` — pass ``{}`` (or a different ID) to simulate
+    a spoofed advert that should be rejected by the picker.
     """
     info = MagicMock()
     info.address = address
@@ -119,6 +123,9 @@ def _make_service_info(
     info.source = source
     info.device = MagicMock(name=f"BLEDevice({address})")
     info.connectable = True
+    info.manufacturer_data = (
+        {0x0BFF: b"\x03"} if manufacturer_data is None else manufacturer_data
+    )
     return info
 
 
@@ -491,6 +498,61 @@ async def test_pick_best_device_returns_none_when_no_match(
         device = coord._pick_best_device()
 
     assert device is None
+
+
+@pytest.mark.asyncio
+async def test_pick_best_device_rejects_name_only_spoof(hass: HomeAssistant) -> None:
+    """A device advertising ``RATIO_<serial>`` without Ratio manufacturer data
+    must not be selected. Otherwise any nearby device spoofing the local name
+    could win by RSSI and receive subsequent GATT ops, including Wi-Fi
+    credentials via ``reconfigure_wifi``."""
+    spoof = _make_service_info(
+        address="DE:AD:BE:EF:00:00",
+        rssi=-30,  # very strong, but should be ignored
+        manufacturer_data={},  # no manufacturer data at all
+    )
+    real = _make_service_info(
+        address="79:75:75:A4:A0:45",
+        rssi=-72,
+        manufacturer_data={0x0BFF: b"\x03"},
+    )
+    coord = _make_coordinator(hass)
+
+    with patch(
+        "custom_components.ratio.ble.async_discovered_service_info",
+        return_value=[spoof, real],
+    ):
+        device = coord._pick_best_device()
+
+    assert device is real.device
+    assert coord.address == "79:75:75:A4:A0:45"
+
+
+@pytest.mark.asyncio
+async def test_pick_best_device_rejects_wrong_manufacturer_id(
+    hass: HomeAssistant,
+) -> None:
+    """A spoof carrying *some* manufacturer data under a non-Ratio company ID
+    must also be rejected — the Ratio CIC is ``0x0BFF`` and nothing else."""
+    spoof = _make_service_info(
+        address="DE:AD:BE:EF:00:01",
+        rssi=-30,
+        manufacturer_data={0x0042: b"\x03"},  # not Ratio's CIC
+    )
+    real = _make_service_info(
+        address="79:75:75:A4:A0:45",
+        rssi=-72,
+        manufacturer_data={0x0BFF: b"\x03"},
+    )
+    coord = _make_coordinator(hass)
+
+    with patch(
+        "custom_components.ratio.ble.async_discovered_service_info",
+        return_value=[spoof, real],
+    ):
+        device = coord._pick_best_device()
+
+    assert device is real.device
 
 
 @pytest.mark.asyncio

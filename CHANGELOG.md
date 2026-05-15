@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **BLE candidate picker now validates Ratio manufacturer data** before
+  selecting an advert as a connection target. The previous picker filtered
+  only on `local_name == RATIO_<serial>`, so any device advertising the same
+  local name could win on RSSI and receive subsequent GATT operations —
+  including Wi-Fi credentials passed through `reconfigure_wifi`. Both
+  `RatioBleCoordinator._pick_best_device` and the `ratio.ble_probe`
+  diagnostic service now require the advert to also carry payload under
+  Ratio's Bluetooth SIG Company Identifier `0x0BFF` (validated via
+  `aioratio.ble.parse_advertisement`), matching the same check the config
+  flow already performs at discovery time.
+
 ### Changed
 
 - **BLE sensors now update every ~3 s instead of every 1–5 minutes.** The

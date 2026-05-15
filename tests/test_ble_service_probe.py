@@ -27,8 +27,14 @@ def _make_service_info(
     rssi: int,
     source: str,
     scanner_class: str = "HaScanner",
+    manufacturer_data: dict[int, bytes] | None = None,
 ) -> MagicMock:
-    """Build a fake ``BluetoothServiceInfoBleak`` for ``async_discovered_service_info``."""
+    """Build a fake ``BluetoothServiceInfoBleak`` for ``async_discovered_service_info``.
+
+    ``manufacturer_data`` defaults to a valid Ratio payload
+    (``ADVERT_MANUFACTURER_ID = 0x0BFF``); pass ``{}`` to simulate a spoof
+    that should be rejected by the probe's candidate filter.
+    """
     info = MagicMock()
     info.name = name
     info.address = address
@@ -36,6 +42,9 @@ def _make_service_info(
     info.source = source
     info.device = MagicMock(name=f"BLEDevice({address})")
     info.connectable = True
+    info.manufacturer_data = (
+        {0x0BFF: b"\x03"} if manufacturer_data is None else manufacturer_data
+    )
     scanner = MagicMock()
     scanner.source = source
     type(scanner).__name__ = scanner_class  # so type(scanner).__name__ resolves cleanly
@@ -118,6 +127,70 @@ async def test_ble_probe_picks_strongest_rssi_and_reports_success(
     # BleClient was constructed with the strongest device, not the weakest.
     ble_client_cls.assert_called_once_with(strong.device)
     ble_client.get_charger_sensor_values.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ble_probe_rejects_name_only_spoofs(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    setup_integration: MockConfigEntry,
+) -> None:
+    """An advert carrying the ``RATIO_<serial>`` local name but no Ratio
+    manufacturer data must not be considered a candidate — it's a spoof.
+    Without this filter, a strong-RSSI fake could be ``chosen`` and the probe
+    would happily connect to it (and a follow-up ``reconfigure_wifi`` would
+    leak credentials to the spoof)."""
+    entry = setup_integration
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "P00000000013428")},
+    )
+
+    spoof = _make_service_info(
+        name="RATIO_P00000000013428",
+        address="DE:AD:BE:EF:00:00",
+        rssi=-30,  # strongest, but should be ignored
+        source="40:23:43:1D:C8:EC",
+        manufacturer_data={},
+    )
+    real = _make_service_info(
+        name="RATIO_P00000000013428",
+        address="63:0F:29:56:F2:9C",
+        rssi=-72,
+        source="F4:2D:C9:70:C2:7E",
+        scanner_class="ESPHomeScanner",
+    )
+
+    ble_client = MagicMock()
+    ble_client.__aenter__ = AsyncMock(return_value=ble_client)
+    ble_client.__aexit__ = AsyncMock(return_value=None)
+    ble_client.get_charger_sensor_values = AsyncMock(return_value=MagicMock())
+
+    with (
+        patch(
+            "custom_components.ratio.services.async_discovered_service_info",
+            return_value=[spoof, real],
+        ),
+        patch(
+            "custom_components.ratio.services.BleClient",
+            return_value=ble_client,
+        ) as ble_client_cls,
+    ):
+        response = await hass.services.async_call(
+            DOMAIN,
+            SERVICE_BLE_PROBE,
+            {"device_id": device.id},
+            blocking=True,
+            return_response=True,
+        )
+
+    assert response is not None
+    assert response["status"] == "ok"
+    # The spoof must not be chosen even though its RSSI is stronger.
+    assert response["chosen"]["address"] == "63:0F:29:56:F2:9C"
+    # And it must not be listed among connection candidates.
+    assert [c["address"] for c in response["candidates"]] == ["63:0F:29:56:F2:9C"]
+    ble_client_cls.assert_called_once_with(real.device)
 
 
 @pytest.mark.asyncio

@@ -24,6 +24,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from aioratio import BleClient
+from aioratio.ble import parse_advertisement
 from aioratio.ble.models import ChargerSensorValuesResponse
 from aioratio.exceptions import (
     RatioBleConnectionError,
@@ -254,6 +255,12 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         on ``local_name`` (stable across rotation) and picking the best
         RSSI lets the coordinator use whichever scanner is actually nearest.
 
+        Candidates are validated with ``parse_advertisement`` so a device
+        merely spoofing the ``RATIO_<serial>`` local name (without the Ratio
+        manufacturer-data payload under CIC ``0x0BFF``) cannot win on RSSI
+        and receive subsequent GATT ops — notably the Wi-Fi credentials
+        passed through ``reconfigure_wifi``.
+
         Updates ``self.address`` so ``_scanner_info`` and diagnostics name
         the scanner now in use.
         """
@@ -262,6 +269,7 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             info
             for info in async_discovered_service_info(self.hass, connectable=True)
             if info.name == local_name
+            and parse_advertisement(info.name, info.manufacturer_data) is not None
         ]
         if not candidates:
             return None
