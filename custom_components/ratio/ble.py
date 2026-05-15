@@ -14,16 +14,17 @@ from aioratio.exceptions import (
 )
 from bleak import BleakClient
 from bleak.exc import BleakError
+from bleak.backends.device import BLEDevice
 from homeassistant.components.bluetooth import (
     BaseHaRemoteScanner,
     BluetoothScanningMode,
     BluetoothServiceInfoBleak,
+    async_discovered_service_info,
     async_scanner_devices_by_address,
 )
 from homeassistant.components.bluetooth.active_update_coordinator import (
     ActiveBluetoothDataUpdateCoordinator,
 )
-from homeassistant.components.bluetooth.api import async_ble_device_from_address
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.issue_registry import (
     IssueSeverity,
@@ -109,14 +110,40 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
     ) -> bool:
         return seconds_since_last_poll is None or seconds_since_last_poll >= 45
 
+    def _pick_best_device(self) -> BLEDevice | None:
+        """Return the BLEDevice from whichever scanner has the strongest
+        current advertisement for ``RATIO_<serial>``.
+
+        Ratio chargers rotate Resolvable Private Addresses every ~minute, so
+        looking up by a single static ``self.address`` consistently returns
+        the BlueZ-routed device (BlueZ alone observes the static random
+        identity address). The ESPHome BT proxy sees the same charger
+        through its rotating RPAs, often with a much stronger RSSI — but
+        under MACs that the address-keyed lookup can never resolve. Matching
+        on ``local_name`` (stable across rotation) and picking the best
+        RSSI lets the coordinator use whichever scanner is actually nearest.
+
+        Updates ``self.address`` so ``_scanner_info`` and diagnostics name
+        the scanner now in use.
+        """
+        local_name = f"RATIO_{self.serial}"
+        candidates = [
+            info
+            for info in async_discovered_service_info(self.hass, connectable=True)
+            if info.name == local_name
+        ]
+        if not candidates:
+            return None
+        best = max(candidates, key=lambda i: i.rssi or -127)
+        self.address = best.address
+        return best.device
+
     async def _async_update(
         self, _service_info: BluetoothServiceInfoBleak
     ) -> BleSnapshot:
-        device = async_ble_device_from_address(
-            self.hass, self.address, connectable=True
-        )
+        device = self._pick_best_device()
         if device is None:
-            raise UpdateFailed("Device not found")
+            raise UpdateFailed(f"No advert for RATIO_{self.serial}")
 
         client = BleClient(device)
         try:
@@ -138,9 +165,7 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             # bond so subsequent connections skip this branch entirely.
             if await self._try_pair():
                 try:
-                    device = async_ble_device_from_address(
-                        self.hass, self.address, connectable=True
-                    )
+                    device = self._pick_best_device()
                     if device is None:
                         # Device went out of range between pairing and re-fetch.
                         raise UpdateFailed(
@@ -198,15 +223,13 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         (firmware 2024.6+, ``active: true``); when the proxy lacks that flag
         ``bleak`` raises ``NotImplementedError``.
         """
+        device = self._pick_best_device()
         source, is_proxy = _scanner_info(self.hass, self.address)
         _LOGGER.debug(
             "Attempting BLE pair for %s via scanner=%s (proxy=%s)",
             self.address,
             source,
             is_proxy,
-        )
-        device = async_ble_device_from_address(
-            self.hass, self.address, connectable=True
         )
         if device is None:
             _LOGGER.warning(

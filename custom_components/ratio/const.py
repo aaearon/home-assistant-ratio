@@ -17,6 +17,7 @@ SERVICE_ADD_VEHICLE = "add_vehicle"
 SERVICE_REMOVE_VEHICLE = "remove_vehicle"
 SERVICE_IMPORT_SESSION_HISTORY = "import_session_history"
 SERVICE_RECONFIGURE_WIFI = "reconfigure_wifi"
+SERVICE_BLE_PROBE = "ble_probe"
 
 ATTR_CHARGER_ID = "charger_id"
 ATTR_VEHICLE_ID = "vehicle_id"

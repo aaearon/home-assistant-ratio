@@ -84,10 +84,25 @@ def _make_ble_client_mock(sensor_response: ChargerSensorValuesResponse) -> Magic
     return client
 
 
-def _make_service_info(address: str = "AA:BB:CC:DD:EE:FF") -> MagicMock:
+def _make_service_info(
+    address: str = "AA:BB:CC:DD:EE:FF",
+    *,
+    name: str | None = "RATIO_SN001",
+    rssi: int = -70,
+    source: str = "00:11:22:33:44:55",
+) -> MagicMock:
+    """Build a fake BluetoothServiceInfoBleak.
+
+    Defaults match the canonical test serial ``SN001`` so the coordinator's
+    ``RATIO_{serial}`` matcher accepts it.
+    """
     info = MagicMock()
     info.address = address
-    info.device = MagicMock()
+    info.name = name
+    info.rssi = rssi
+    info.source = source
+    info.device = MagicMock(name=f"BLEDevice({address})")
+    info.connectable = True
     return info
 
 
@@ -133,7 +148,7 @@ async def test_ble_snapshot_populated(hass: HomeAssistant) -> None:
 
     with (
         patch(
-            "custom_components.ratio.ble.async_ble_device_from_address",
+            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=ble_device,
         ),
         patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
@@ -187,7 +202,7 @@ async def test_bond_error_creates_repair_issue(hass: HomeAssistant) -> None:
 
     with (
         patch(
-            "custom_components.ratio.ble.async_ble_device_from_address",
+            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=ble_device,
         ),
         patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
@@ -224,7 +239,7 @@ async def test_connection_error_raises_update_failed(hass: HomeAssistant) -> Non
 
     with (
         patch(
-            "custom_components.ratio.ble.async_ble_device_from_address",
+            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=ble_device,
         ),
         patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
@@ -252,7 +267,7 @@ async def test_cloud_coordinator_data_untouched(hass: HomeAssistant) -> None:
 
     with (
         patch(
-            "custom_components.ratio.ble.async_ble_device_from_address",
+            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=ble_device,
         ),
         patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
@@ -278,7 +293,7 @@ async def test_try_pair_returns_true_when_pair_completes(hass: HomeAssistant) ->
 
     with (
         patch(
-            "custom_components.ratio.ble.async_ble_device_from_address",
+            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=ble_device,
         ),
         patch("custom_components.ratio.ble.BleakClient", return_value=raw_bleak),
@@ -310,7 +325,7 @@ async def test_try_pair_logs_firmware_hint_on_not_implemented(
 
     with (
         patch(
-            "custom_components.ratio.ble.async_ble_device_from_address",
+            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=ble_device,
         ),
         patch("custom_components.ratio.ble.BleakClient", return_value=raw_bleak),
@@ -343,7 +358,7 @@ async def test_try_pair_logs_bleak_error_with_class_name(
 
     with (
         patch(
-            "custom_components.ratio.ble.async_ble_device_from_address",
+            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=ble_device,
         ),
         patch("custom_components.ratio.ble.BleakClient", return_value=raw_bleak),
@@ -448,3 +463,114 @@ def test_needs_poll_respects_45s_cadence() -> None:
     assert coord._needs_poll(service_info, 30.0) is False
     assert coord._needs_poll(service_info, 45.0) is True
     assert coord._needs_poll(service_info, 100.0) is True
+
+
+# ---------------------------------------------------------------------------
+# _pick_best_device — name-based scanner selection.
+#
+# Reason for the refactor: the integration originally locked
+# ``coordinator.address`` to the address discovered at config-entry creation
+# time. Ratio chargers rotate Resolvable Private Addresses every ~minute, so
+# an ESPHome BT-proxy (which sees only RPAs) and the local BlueZ adapter
+# (which observes the static random identity address) report the same
+# charger under different MACs. Looking up by ``self.address`` always
+# resolved to whichever scanner happened to see that one address — usually
+# the weaker one. ``_pick_best_device`` walks every connectable advert,
+# filters by ``RATIO_<serial>`` (stable across rotation), and picks the
+# strongest RSSI so the coordinator routes through whichever scanner is
+# actually closest to the charger.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pick_best_device_returns_strongest_rssi(hass: HomeAssistant) -> None:
+    """When multiple scanners see the charger, pick the strongest-RSSI advert."""
+    weak = _make_service_info(
+        address="C0:49:EF:F5:AA:FE", rssi=-86, source="40:23:43:1D:C8:EC"
+    )
+    strong = _make_service_info(
+        address="79:75:75:A4:A0:45", rssi=-59, source="F4:2D:C9:70:C2:7E"
+    )
+    unrelated = _make_service_info(
+        address="BC:10:2F:20:DE:13", name="Fridge", rssi=-50
+    )
+    coord = _make_coordinator(hass)
+
+    with patch(
+        "custom_components.ratio.ble.async_discovered_service_info",
+        return_value=[weak, unrelated, strong],
+    ):
+        device = coord._pick_best_device()
+
+    assert device is strong.device
+    # self.address is updated so diagnostics + _scanner_info reflect the
+    # scanner actually being used.
+    assert coord.address == "79:75:75:A4:A0:45"
+
+
+@pytest.mark.asyncio
+async def test_pick_best_device_returns_none_when_no_match(
+    hass: HomeAssistant,
+) -> None:
+    """If no advert matches ``RATIO_<serial>``, return None — caller raises."""
+    unrelated = _make_service_info(
+        address="BC:10:2F:20:DE:13", name="Fridge", rssi=-50
+    )
+    coord = _make_coordinator(hass)
+
+    with patch(
+        "custom_components.ratio.ble.async_discovered_service_info",
+        return_value=[unrelated],
+    ):
+        device = coord._pick_best_device()
+
+    assert device is None
+
+
+@pytest.mark.asyncio
+async def test_async_update_uses_strongest_scanner(hass: HomeAssistant) -> None:
+    """_async_update routes the BleClient via the strongest-RSSI scanner."""
+    from custom_components.ratio.ble import BleSnapshot
+
+    sensor_resp = _make_sensor_response()
+    ble_client = _make_ble_client_mock(sensor_resp)
+
+    weak = _make_service_info(
+        address="C0:49:EF:F5:AA:FE", rssi=-86, source="40:23:43:1D:C8:EC"
+    )
+    strong = _make_service_info(
+        address="79:75:75:A4:A0:45", rssi=-59, source="F4:2D:C9:70:C2:7E"
+    )
+
+    coord = _make_coordinator(hass)
+
+    with (
+        patch(
+            "custom_components.ratio.ble.async_discovered_service_info",
+            return_value=[weak, strong],
+        ),
+        patch(
+            "custom_components.ratio.ble.BleClient", return_value=ble_client
+        ) as ble_client_cls,
+    ):
+        snapshot = await coord._async_update(_make_service_info())
+
+    assert isinstance(snapshot, BleSnapshot)
+    ble_client_cls.assert_called_once_with(strong.device)
+
+
+@pytest.mark.asyncio
+async def test_async_update_raises_when_no_advert(hass: HomeAssistant) -> None:
+    """No advert for the local_name → UpdateFailed, no connect attempt."""
+    coord = _make_coordinator(hass)
+    with (
+        patch(
+            "custom_components.ratio.ble.async_discovered_service_info",
+            return_value=[],
+        ),
+        patch("custom_components.ratio.ble.BleClient") as ble_client_cls,
+        pytest.raises(UpdateFailed),
+    ):
+        await coord._async_update(_make_service_info())
+
+    ble_client_cls.assert_not_called()

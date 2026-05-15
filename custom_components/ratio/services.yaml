@@ -108,3 +108,17 @@ reconfigure_wifi:
       selector:
         text:
           type: password
+
+ble_probe:
+  name: Probe BLE connectivity (diagnostic)
+  description: >-
+    Diagnostic-only. Looks up the strongest current advertisement for
+    `RATIO_<serial>` and attempts one BLE connect + read, bypassing the
+    coordinator's locked address. Returns a structured response naming the
+    scanner used and the outcome.
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: ratio

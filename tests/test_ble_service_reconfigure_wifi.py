@@ -69,12 +69,10 @@ async def test_reconfigure_wifi_success(
 
     ble_device = MagicMock()
 
-    with (
-        patch(
-            "custom_components.ratio.services.async_ble_device_from_address",
-            return_value=ble_device,
-        ),
-        patch("custom_components.ratio.services.BleClient", return_value=ble_client),
+    ble_coord._pick_best_device = MagicMock(return_value=ble_device)
+
+    with patch(
+        "custom_components.ratio.services.BleClient", return_value=ble_client
     ):
         await hass.services.async_call(
             DOMAIN,
@@ -105,12 +103,10 @@ async def test_reconfigure_wifi_no_password(
 
     ble_device = MagicMock()
 
-    with (
-        patch(
-            "custom_components.ratio.services.async_ble_device_from_address",
-            return_value=ble_device,
-        ),
-        patch("custom_components.ratio.services.BleClient", return_value=ble_client),
+    ble_coord._pick_best_device = MagicMock(return_value=ble_device)
+
+    with patch(
+        "custom_components.ratio.services.BleClient", return_value=ble_client
     ):
         await hass.services.async_call(
             DOMAIN,
@@ -140,12 +136,9 @@ async def test_reconfigure_wifi_ssid_not_found(
     entry.runtime_data.ble_coordinators = {"SN003": ble_coord}
 
     ble_device = MagicMock()
+    ble_coord._pick_best_device = MagicMock(return_value=ble_device)
 
     with (
-        patch(
-            "custom_components.ratio.services.async_ble_device_from_address",
-            return_value=ble_device,
-        ),
         patch("custom_components.ratio.services.BleClient", return_value=ble_client),
         pytest.raises(ServiceValidationError) as exc_info,
     ):
@@ -246,12 +239,9 @@ async def test_reconfigure_wifi_connect_failed(
     entry.runtime_data.ble_coordinators = {"SN006": ble_coord}
 
     ble_device = MagicMock()
+    ble_coord._pick_best_device = MagicMock(return_value=ble_device)
 
     with (
-        patch(
-            "custom_components.ratio.services.async_ble_device_from_address",
-            return_value=ble_device,
-        ),
         patch("custom_components.ratio.services.BleClient", return_value=ble_client),
         pytest.raises(ServiceValidationError) as exc_info,
     ):
