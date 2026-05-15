@@ -77,8 +77,6 @@ Target a specific charger via Home Assistant's device picker (`device_id`). Afte
 
 ## Bluetooth (optional)
 
-> BLE shipped in 0.10.0 with the cloud path fully tested, but **end-to-end validation on real hardware is pending community reports**. The discovery/config-flow path is smoke-tested; the GATT poll path is not maintainer-verified. Please [open an issue](https://github.com/aaearon/home-assistant-ratio/issues) with results.
-
 The charger exposes a BLE GATT service (Inspiro IPC) the mobile app uses alongside the cloud. Enabling BLE per charger adds **per-phase voltage/current sensors** (not available from the cloud at all) and the **`ratio.reconfigure_wifi`** service. Cloud setup is required first; BLE is additive.
 
 ### Prerequisites
