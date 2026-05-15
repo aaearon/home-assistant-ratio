@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aioratio.ble.models.wifi import WifiAccessPoint
@@ -23,14 +23,27 @@ def _make_wifi_ap(ssid: str) -> MagicMock:
 
 
 def _make_ble_coordinator(
-    serial: str = "SN001", address: str = "AA:BB:CC:DD:EE:FF"
+    serial: str = "SN001",
+    address: str = "AA:BB:CC:DD:EE:FF",
+    ble_client: MagicMock | None = None,
 ) -> MagicMock:
+    """Build a coordinator mock whose ``run_wifi_command`` invokes the passed
+    callable against ``ble_client``.
+
+    The reconfigure-Wi-Fi service now dispatches through
+    ``coordinator.run_wifi_command(fn)`` — re-using the always-on session
+    loop's live client when present, falling back to a one-shot otherwise.
+    Either path is opaque to the service; tests just inject the client mock
+    the handler should ultimately operate against.
+    """
     coord = MagicMock()
     coord.serial = serial
     coord.address = address
-    coord._wifi_lock = AsyncMock()
-    coord._wifi_lock.__aenter__ = AsyncMock(return_value=None)
-    coord._wifi_lock.__aexit__ = AsyncMock(return_value=None)
+
+    async def _run_wifi_command(fn):
+        await fn(ble_client)
+
+    coord.run_wifi_command = AsyncMock(side_effect=_run_wifi_command)
     return coord
 
 
@@ -59,30 +72,20 @@ async def test_reconfigure_wifi_success(
         identifiers={(DOMAIN, "SN001")},
     )
 
-    ble_coord = _make_ble_coordinator("SN001")
     ble_client = _make_ble_client_mock(
         scan_result=[_make_wifi_ap("MyNetwork"), _make_wifi_ap("OtherNet")]
     )
-
-    # Inject ble_coordinators into runtime_data
+    ble_coord = _make_ble_coordinator("SN001", ble_client=ble_client)
     entry.runtime_data.ble_coordinators = {"SN001": ble_coord}
 
-    ble_device = MagicMock()
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_RECONFIGURE_WIFI,
+        {"device_id": device.id, "ssid": "MyNetwork", "password": "secret"},
+        blocking=True,
+    )
 
-    with (
-        patch(
-            "custom_components.ratio.services.async_ble_device_from_address",
-            return_value=ble_device,
-        ),
-        patch("custom_components.ratio.services.BleClient", return_value=ble_client),
-    ):
-        await hass.services.async_call(
-            DOMAIN,
-            SERVICE_RECONFIGURE_WIFI,
-            {"device_id": device.id, "ssid": "MyNetwork", "password": "secret"},
-            blocking=True,
-        )
-
+    ble_coord.run_wifi_command.assert_awaited_once()
     ble_client.wifi_connect.assert_awaited_once_with("MyNetwork", "secret")
 
 
@@ -99,25 +102,16 @@ async def test_reconfigure_wifi_no_password(
         identifiers={(DOMAIN, "SN002")},
     )
 
-    ble_coord = _make_ble_coordinator("SN002")
     ble_client = _make_ble_client_mock(scan_result=[_make_wifi_ap("OpenNet")])
+    ble_coord = _make_ble_coordinator("SN002", ble_client=ble_client)
     entry.runtime_data.ble_coordinators = {"SN002": ble_coord}
 
-    ble_device = MagicMock()
-
-    with (
-        patch(
-            "custom_components.ratio.services.async_ble_device_from_address",
-            return_value=ble_device,
-        ),
-        patch("custom_components.ratio.services.BleClient", return_value=ble_client),
-    ):
-        await hass.services.async_call(
-            DOMAIN,
-            SERVICE_RECONFIGURE_WIFI,
-            {"device_id": device.id, "ssid": "OpenNet"},
-            blocking=True,
-        )
+    await hass.services.async_call(
+        DOMAIN,
+        SERVICE_RECONFIGURE_WIFI,
+        {"device_id": device.id, "ssid": "OpenNet"},
+        blocking=True,
+    )
 
     ble_client.wifi_connect.assert_awaited_once_with("OpenNet", None)
 
@@ -135,20 +129,11 @@ async def test_reconfigure_wifi_ssid_not_found(
         identifiers={(DOMAIN, "SN003")},
     )
 
-    ble_coord = _make_ble_coordinator("SN003")
     ble_client = _make_ble_client_mock(scan_result=[_make_wifi_ap("SomeOtherNet")])
+    ble_coord = _make_ble_coordinator("SN003", ble_client=ble_client)
     entry.runtime_data.ble_coordinators = {"SN003": ble_coord}
 
-    ble_device = MagicMock()
-
-    with (
-        patch(
-            "custom_components.ratio.services.async_ble_device_from_address",
-            return_value=ble_device,
-        ),
-        patch("custom_components.ratio.services.BleClient", return_value=ble_client),
-        pytest.raises(ServiceValidationError) as exc_info,
-    ):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await hass.services.async_call(
             DOMAIN,
             SERVICE_RECONFIGURE_WIFI,
@@ -238,23 +223,14 @@ async def test_reconfigure_wifi_connect_failed(
         identifiers={(DOMAIN, "SN006")},
     )
 
-    ble_coord = _make_ble_coordinator("SN006")
     ble_client = _make_ble_client_mock(
         scan_result=[_make_wifi_ap("TargetNet")],
         connect_side_effect=exc,
     )
+    ble_coord = _make_ble_coordinator("SN006", ble_client=ble_client)
     entry.runtime_data.ble_coordinators = {"SN006": ble_coord}
 
-    ble_device = MagicMock()
-
-    with (
-        patch(
-            "custom_components.ratio.services.async_ble_device_from_address",
-            return_value=ble_device,
-        ),
-        patch("custom_components.ratio.services.BleClient", return_value=ble_client),
-        pytest.raises(ServiceValidationError) as exc_info,
-    ):
+    with pytest.raises(ServiceValidationError) as exc_info:
         await hass.services.async_call(
             DOMAIN,
             SERVICE_RECONFIGURE_WIFI,

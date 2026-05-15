@@ -17,7 +17,10 @@ from aioratio.exceptions import (
 )
 from aioratio.models import ChargeSchedule, ScheduleSlot, Vehicle
 from bleak.exc import BleakError
-from homeassistant.components.bluetooth.api import async_ble_device_from_address
+from homeassistant.components.bluetooth import (
+    BluetoothServiceInfoBleak,
+    async_discovered_service_info,
+)
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -38,6 +41,7 @@ from .const import (
     ATTR_VEHICLE_NAME,
     DOMAIN,
     SERVICE_ADD_VEHICLE,
+    SERVICE_BLE_PROBE,
     SERVICE_IMPORT_SESSION_HISTORY,
     SERVICE_RECONFIGURE_WIFI,
     SERVICE_REMOVE_VEHICLE,
@@ -172,6 +176,8 @@ RECONFIGURE_WIFI_SCHEMA = vol.Schema(
         vol.Optional("password"): cv.string,
     }
 )
+
+BLE_PROBE_SCHEMA = vol.Schema({vol.Required("device_id"): cv.string})
 
 
 def _resolve_serials(hass: HomeAssistant, call: ServiceCall) -> list[tuple[str, str]]:
@@ -419,38 +425,92 @@ async def _handle_reconfigure_wifi(hass: HomeAssistant, call: ServiceCall) -> No
     # empty string the service schema would otherwise yield.
     password: str | None = call.data.get("password") or None
 
-    ble_device = async_ble_device_from_address(
-        hass, coordinator.address, connectable=True
-    )
-    if ble_device is None:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="ble_connect_failed",
-            translation_placeholders={"serial": serial, "error": "device not found"},
-        )
+    async def _run(client: BleClient) -> None:
+        scan_results = await client.wifi_scan()
+        found_ssids = {ap.ssid for ap in scan_results}
+        if ssid not in found_ssids:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="ssid_not_found",
+                translation_placeholders={"ssid": ssid},
+            )
+        await client.wifi_connect(ssid, password)
 
     try:
-        async with coordinator._wifi_lock:
-            client = BleClient(ble_device)
-            try:
-                async with client:
-                    scan_results = await client.wifi_scan()
-                    found_ssids = {ap.ssid for ap in scan_results}
-                    if ssid not in found_ssids:
-                        raise ServiceValidationError(
-                            translation_domain=DOMAIN,
-                            translation_key="ssid_not_found",
-                            translation_placeholders={"ssid": ssid},
-                        )
-                    await client.wifi_connect(ssid, password)
-            except ServiceValidationError:
-                raise
+        # Re-uses the session loop's live ``BleClient`` if connected; falls
+        # back to a one-shot connect if the session is in backoff. aioratio's
+        # transaction mutex serializes this command against the 3 s sensor
+        # poll on the live path so writes and responses cannot interleave.
+        await coordinator.run_wifi_command(_run)
+    except ServiceValidationError:
+        raise
     except (RatioBleConnectionError, RatioBleError, BleakError) as err:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="ble_connect_failed",
             translation_placeholders={"serial": serial, "error": str(err)},
         ) from err
+
+
+async def _handle_ble_probe(hass: HomeAssistant, call: ServiceCall) -> ServiceResponse:
+    """Diagnostic: connect to the charger via the strongest current advert.
+
+    Bypasses ``RatioBleCoordinator.address`` to test whether a BT proxy (which
+    only sees rotating RPAs) can complete a GATT handshake. Returns a
+    structured response listing every advert seen for ``RATIO_<serial>``,
+    which scanner is serving it, and the outcome of a single connect+read.
+    """
+    pairs = _resolve_serials(hass, call)
+    entry_id, serial = pairs[0]
+    local_name = f"RATIO_{serial}"
+
+    # ``_info`` holds the raw service info (used to construct ``BleClient``);
+    # ``meta`` is the user-visible subset that lands in the response.
+    candidates: list[tuple[BluetoothServiceInfoBleak, dict[str, JsonValueType]]] = []
+    for info in async_discovered_service_info(hass, connectable=True):
+        if info.name != local_name:
+            continue
+        scanner = getattr(info.device, "scanner", None)
+        scanner_class = type(scanner).__name__ if scanner is not None else None
+        meta: dict[str, JsonValueType] = {
+            "address": info.address,
+            "rssi": info.rssi,
+            "scanner_source": info.source,
+            "scanner_class": scanner_class,
+        }
+        candidates.append((info, meta))
+    # ``info.rssi`` is ``int | None``; treat missing RSSI as worst-case so the
+    # advert still sorts deterministically.
+    candidates.sort(
+        key=lambda c: c[0].rssi if c[0].rssi is not None else -127, reverse=True
+    )
+
+    response: dict[str, JsonValueType] = {
+        "serial": serial,
+        "entry_id": entry_id,
+        "local_name": local_name,
+        "candidates": [meta for _, meta in candidates],
+    }
+
+    if not candidates:
+        response["status"] = "no_advert"
+        return response
+
+    best_info, best_meta = candidates[0]
+    response["chosen"] = best_meta
+
+    client = BleClient(best_info.device)
+    try:
+        async with client:
+            await client.get_charger_sensor_values()
+    except Exception as err:  # noqa: BLE001 — diagnostic surfaces every failure mode
+        response["status"] = "error"
+        response["error_type"] = type(err).__name__
+        response["error"] = str(err)
+        return response
+
+    response["status"] = "ok"
+    return response
 
 
 async def async_setup_services(hass: HomeAssistant) -> None:
@@ -489,6 +549,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     async def reconfigure_wifi(call: ServiceCall) -> None:
         await _handle_reconfigure_wifi(hass, call)
 
+    async def ble_probe(call: ServiceCall) -> ServiceResponse:
+        return await _handle_ble_probe(hass, call)
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_ADD_VEHICLE,
@@ -515,6 +578,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         reconfigure_wifi,
         schema=RECONFIGURE_WIFI_SCHEMA,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_BLE_PROBE,
+        ble_probe,
+        schema=BLE_PROBE_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
 
 
 async def async_unload_services(hass: HomeAssistant) -> None:
@@ -527,6 +597,7 @@ async def async_unload_services(hass: HomeAssistant) -> None:
         SERVICE_REMOVE_VEHICLE,
         SERVICE_IMPORT_SESSION_HISTORY,
         SERVICE_RECONFIGURE_WIFI,
+        SERVICE_BLE_PROBE,
     ):
         if hass.services.has_service(DOMAIN, svc):
             hass.services.async_remove(DOMAIN, svc)

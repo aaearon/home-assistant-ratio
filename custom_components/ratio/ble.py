@@ -1,30 +1,51 @@
-"""Optional BLE support for the Ratio integration."""
+"""Optional BLE support for the Ratio integration.
+
+Holds a single BLE connection per charger open continuously and runs a 3 s
+sensor-values poll loop (mirrors the official app's
+``ChargerInformationRepository`` cadence). Each yield from
+``BleClient.poll_sensor_values`` becomes a coordinator data update — entities
+see voltage/current within a single advert/poll window rather than the
+1-5 minute cadence that a per-poll connect/pair/disconnect produced.
+
+Why the second ``local_name``-keyed advert subscription: the parent class
+registers an *address*-keyed Bluetooth callback at ``async_start`` and never
+re-keys it when ``_pick_best_device`` switches ``self.address`` to a
+proxy-routed Resolvable Private Address. Proxy adverts then never wake the
+session loop. A separate matcher on the stable ``RATIO_<serial>`` local name
+keeps the wake path alive regardless of which scanner serves the advert.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from aioratio import BleClient
+from aioratio.ble.models import ChargerSensorValuesResponse
 from aioratio.exceptions import (
     RatioBleConnectionError,
     RatioBleError,
     RatioBleNotBondedError,
 )
-from bleak import BleakClient
+from bleak.backends.device import BLEDevice
 from bleak.exc import BleakError
 from homeassistant.components.bluetooth import (
     BaseHaRemoteScanner,
+    BluetoothCallbackMatcher,
+    BluetoothChange,
     BluetoothScanningMode,
     BluetoothServiceInfoBleak,
+    async_discovered_service_info,
+    async_register_callback,
     async_scanner_devices_by_address,
 )
 from homeassistant.components.bluetooth.active_update_coordinator import (
     ActiveBluetoothDataUpdateCoordinator,
 )
-from homeassistant.components.bluetooth.api import async_ble_device_from_address
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.issue_registry import (
     IssueSeverity,
     async_create_issue,
@@ -35,6 +56,20 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+# Backoff bounds for the session reconnect loop. Bond failures jump straight
+# to ``_BACKOFF_BOND_S`` so the integration doesn't hammer a charger that
+# requires user-side pairing intervention.
+_BACKOFF_INITIAL_S = 1.0
+_BACKOFF_MAX_S = 60.0
+_BACKOFF_BOND_S = 30.0
+_POLL_PERIOD_S = 3.0
+_SESSION_TASK_CANCEL_TIMEOUT_S = 2.0
+
+
+async def _wait_future(fut: asyncio.Future[None]) -> None:
+    """Bridge ``asyncio.Future`` → coroutine so it can be wrapped in a task."""
+    await fut
 
 
 @dataclass
@@ -57,11 +92,6 @@ def _scanner_info(hass: HomeAssistant, address: str) -> tuple[str | None, bool]:
     is HA's public marker for proxy-style scanners (ESPHome, Shelly, etc.);
     the returned source string is prefixed with the scanner class so reports
     name the actual backend (e.g. ``ESPHomeScanner:AA:BB:...``).
-
-    Returns ``(None, False)`` if no scanner is currently providing the device,
-    which is itself a useful diagnostic. Any unexpected failure inside the BT
-    manager is logged at DEBUG so a stale "scanner=None" line in a report can
-    be distinguished from "the lookup itself blew up".
     """
     try:
         devices = async_scanner_devices_by_address(hass, address, connectable=True)
@@ -81,7 +111,7 @@ def _scanner_info(hass: HomeAssistant, address: str) -> tuple[str | None, bool]:
 
 
 class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
-    """Polls a Ratio charger over BLE and exposes a BleSnapshot."""
+    """Holds a live BLE connection and pushes sensor snapshots every ~3 s."""
 
     def __init__(
         self,
@@ -100,73 +130,302 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             connectable=True,
         )
         self.serial = serial
+        # Wi-Fi service calls serialize against the session loop's live client
+        # at the integration layer; aioratio's transaction lock then serializes
+        # individual commands against the running poll.
         self._wifi_lock: asyncio.Lock = asyncio.Lock()
+        self._session_task: asyncio.Task[None] | None = None
+        self._client: BleClient | None = None
+        self._local_name_unsub: CALLBACK_TYPE | None = None
+        # Set whenever a fresh advert (proxy or local) is observed for
+        # ``RATIO_<serial>``; cleared at the top of each session attempt so
+        # the loop only re-attempts when there's evidence the charger is
+        # actually nearby.
+        self._wake_event: asyncio.Event = asyncio.Event()
+
+    @callback
+    def async_start(self) -> CALLBACK_TYPE:
+        """Start the session loop + secondary local-name advert subscription.
+
+        The parent's ``async_start`` registers an address-keyed callback that
+        is dead for proxy-routed RPAs (the address is mutated post-init by
+        ``_pick_best_device``). We keep the parent registration for entity
+        availability bookkeeping and layer a stable local-name matcher on
+        top so the session loop wakes regardless of which scanner sees the
+        next advert.
+        """
+        parent_stop = super().async_start()
+
+        self._local_name_unsub = async_register_callback(
+            self.hass,
+            self._on_local_name_advert,
+            BluetoothCallbackMatcher(
+                local_name=f"RATIO_{self.serial}", connectable=True
+            ),
+            BluetoothScanningMode.PASSIVE,
+        )
+
+        # If any matching advert is already cached, prime the wake event so
+        # the session loop doesn't sit waiting for the *next* advert when one
+        # is already known.
+        if any(
+            info.name == f"RATIO_{self.serial}"
+            for info in async_discovered_service_info(self.hass, connectable=True)
+        ):
+            self._wake_event.set()
+
+        self._session_task = self.hass.async_create_background_task(
+            self._session_loop(), f"ratio_ble_session_{self.serial}"
+        )
+
+        return self._make_stop_callback(parent_stop)
+
+    def _make_stop_callback(self, parent_stop: CALLBACK_TYPE) -> CALLBACK_TYPE:
+        """Compose cleanup: cancel session task, drop local-name matcher, call parent."""
+
+        @callback
+        def _stop() -> None:
+            task = self._session_task
+            if task is not None and not task.done():
+                task.cancel()
+                # Drain the task on the HA loop so the ``finally:`` in
+                # ``_session_loop`` runs (which awaits ``client.disconnect()``)
+                # before we drop the local-name matcher.
+                self.hass.async_create_task(
+                    self._await_session_task_drained(task),
+                    f"ratio_ble_session_drain_{self.serial}",
+                )
+            unsub = self._local_name_unsub
+            if unsub is not None:
+                unsub()
+            self._local_name_unsub = None
+            parent_stop()
+
+        return _stop
+
+    async def _await_session_task_drained(self, task: asyncio.Task[None]) -> None:
+        try:
+            await asyncio.wait_for(task, timeout=_SESSION_TASK_CANCEL_TIMEOUT_S)
+        except (asyncio.CancelledError, TimeoutError):
+            return
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug(
+                "BLE session task for %s raised during shutdown",
+                self.serial,
+                exc_info=True,
+            )
+
+    @callback
+    def _on_local_name_advert(
+        self,
+        _service_info: BluetoothServiceInfoBleak,
+        _change: BluetoothChange,
+    ) -> None:
+        """Wake the session loop whenever an advert under our local name lands.
+
+        Fires for hci0-routed and proxy-routed adverts alike (RPAs are
+        irrelevant when matching on ``local_name``). The actual device pick
+        happens inside ``_session_loop`` via ``_pick_best_device``.
+        """
+        self._wake_event.set()
 
     def _needs_poll(
         self,
         _service_info: BluetoothServiceInfoBleak,
-        seconds_since_last_poll: float | None,
+        _seconds_since_last_poll: float | None,
     ) -> bool:
-        return seconds_since_last_poll is None or seconds_since_last_poll >= 45
+        """Disable the parent's debounced poll path while the session loop is alive.
+
+        The always-on session task is the sole driver of ``self.data``; the
+        parent's ``_async_poll`` would only race with it.
+        """
+        return self._session_task is None or self._session_task.done()
+
+    def _pick_best_device(self) -> BLEDevice | None:
+        """Return the BLEDevice from whichever scanner has the strongest
+        current advertisement for ``RATIO_<serial>``.
+
+        Ratio chargers rotate Resolvable Private Addresses every ~minute, so
+        looking up by a single static ``self.address`` consistently returns
+        the BlueZ-routed device (BlueZ alone observes the static random
+        identity address). The ESPHome BT proxy sees the same charger
+        through its rotating RPAs, often with a much stronger RSSI — but
+        under MACs that the address-keyed lookup can never resolve. Matching
+        on ``local_name`` (stable across rotation) and picking the best
+        RSSI lets the coordinator use whichever scanner is actually nearest.
+
+        Updates ``self.address`` so ``_scanner_info`` and diagnostics name
+        the scanner now in use.
+        """
+        local_name = f"RATIO_{self.serial}"
+        candidates = [
+            info
+            for info in async_discovered_service_info(self.hass, connectable=True)
+            if info.name == local_name
+        ]
+        if not candidates:
+            return None
+        best = max(candidates, key=lambda i: i.rssi or -127)
+        self.address = best.address
+        return best.device
 
     async def _async_update(
         self, _service_info: BluetoothServiceInfoBleak
     ) -> BleSnapshot:
-        device = async_ble_device_from_address(
-            self.hass, self.address, connectable=True
-        )
-        if device is None:
-            raise UpdateFailed("Device not found")
+        """No-op for the parent class — the session loop owns all I/O.
 
-        client = BleClient(device)
+        Returns the current ``self.data`` if present, otherwise raises so the
+        parent records the poll as failed. The parent never calls this while
+        ``_needs_poll`` returns False, so this path is reached only if the
+        session task is dead — which is exactly the right moment to surface a
+        failed-update state to entities.
+        """
+        if self.data is not None:
+            return self.data
+        raise UpdateFailed("BLE session loop not active")
+
+    async def run_wifi_command(
+        self,
+        fn: Callable[[BleClient], Awaitable[None]],
+    ) -> None:
+        """Run a Wi-Fi command against the live session client if available.
+
+        If the session loop holds an open connection, the command is
+        dispatched on it — aioratio's transaction mutex (``_send_lock``)
+        serializes the command end-to-end against the running 3 s poll so
+        write/response pairs cannot interleave. If no live client exists
+        (the loop is in backoff), the caller falls back to a one-shot
+        ``BleClient`` constructed against a fresh ``_pick_best_device``.
+
+        Either path is gated by ``_wifi_lock`` at the caller; raises
+        ``RatioBleConnectionError`` if no live client *and* no advert.
+        """
+        async with self._wifi_lock:
+            client = self._client
+            if client is not None and client.is_connected:
+                await fn(client)
+                return
+            device = self._pick_best_device()
+            if device is None:
+                raise RatioBleConnectionError(
+                    f"No BLE link or advert for RATIO_{self.serial}"
+                )
+            one_shot = BleClient(device)
+            async with one_shot:
+                await fn(one_shot)
+
+    async def _session_loop(self) -> None:
+        """Hold a single BleClient open and push a snapshot every poll tick.
+
+        Re-establishes on remote disconnect, gating retries on local-name
+        advert arrivals so we don't churn while the charger is genuinely
+        offline. Exponential backoff (1 → 60 s) on connect/transport errors;
+        bond errors jump to ``_BACKOFF_BOND_S`` and surface a repair issue.
+        """
+        backoff = _BACKOFF_INITIAL_S
         try:
-            async with client:
-                resp = await client.get_charger_sensor_values()
-        except RatioBleNotBondedError as bond_exc:
-            # Log scanner routing so reporters can tell whether the failure
-            # came via a local BlueZ adapter or an ESPHome BT proxy — the two
-            # paths have different pairing semantics.
-            source, is_proxy = _scanner_info(self.hass, self.address)
-            _LOGGER.debug(
-                "BLE bond-required for %s (scanner=%s, proxy=%s): %s",
-                self.address,
-                source,
-                is_proxy,
-                bond_exc,
-            )
-            # Try OS-level bonding once (Ember Mug pattern). BlueZ stores the
-            # bond so subsequent connections skip this branch entirely.
-            if await self._try_pair():
-                try:
-                    device = async_ble_device_from_address(
-                        self.hass, self.address, connectable=True
-                    )
-                    if device is None:
-                        # Device went out of range between pairing and re-fetch.
-                        raise UpdateFailed(
-                            f"Charger {self.serial} not advertising after pairing"
-                        )
-                    client = BleClient(device)
-                    async with client:
-                        resp = await client.get_charger_sensor_values()
-                except (
-                    RatioBleNotBondedError,
-                    RatioBleConnectionError,
-                    RatioBleError,
-                    BleakError,
-                ) as e:
-                    self._fire_bond_issue()
-                    raise UpdateFailed(str(e)) from e
-            else:
-                self._fire_bond_issue()
-                raise UpdateFailed(
-                    f"Charger {self.serial} is not bonded and pairing failed"
-                ) from None
-        except (RatioBleConnectionError, RatioBleError) as e:
-            raise UpdateFailed(str(e)) from e
-        except BleakError as e:
-            raise UpdateFailed(str(e)) from e
+            while True:
+                # Wait for at least one advert before attempting a connect.
+                await self._wake_event.wait()
+                self._wake_event.clear()
 
+                device = self._pick_best_device()
+                if device is None:
+                    # Advert vanished between wake and pick — wait for the next.
+                    continue
+
+                client = BleClient(device)
+                connect_failed = False
+                try:
+                    await client.connect()
+                    self._client = client
+                    self._available = True
+                    backoff = _BACKOFF_INITIAL_S
+                    await self.async_dismiss_bond_issue()
+                    _LOGGER.debug(
+                        "BLE session established for %s via %s",
+                        self.serial,
+                        self.address,
+                    )
+
+                    disconnect_future = client.disconnect_future
+                    assert disconnect_future is not None
+                    disconnect_waiter = asyncio.create_task(
+                        _wait_future(disconnect_future)
+                    )
+                    poll_task = asyncio.create_task(self._run_poll(client))
+                    try:
+                        done, pending = await asyncio.wait(
+                            {disconnect_waiter, poll_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for task in pending:
+                            task.cancel()
+                        # Surface any exception from the completed task so the
+                        # outer ``except`` branches choose the right backoff.
+                        for task in done:
+                            exc = task.exception()
+                            if exc is not None and not isinstance(
+                                exc, asyncio.CancelledError
+                            ):
+                                raise exc
+                    finally:
+                        # Ensure subtasks are cancelled if ``asyncio.wait``
+                        # itself was cancelled by the outer cancel (shutdown).
+                        for task in (disconnect_waiter, poll_task):
+                            if not task.done():
+                                task.cancel()
+                        for task in (disconnect_waiter, poll_task):
+                            with contextlib.suppress(asyncio.CancelledError, Exception):
+                                await task
+                except RatioBleNotBondedError as exc:
+                    connect_failed = True
+                    source, is_proxy = _scanner_info(self.hass, self.address)
+                    _LOGGER.warning(
+                        "BLE bond unrecoverable for %s (scanner=%s, proxy=%s): %s",
+                        self.address,
+                        source,
+                        is_proxy,
+                        exc,
+                    )
+                    self._fire_bond_issue()
+                    backoff = _BACKOFF_BOND_S
+                except (RatioBleConnectionError, RatioBleError, BleakError) as exc:
+                    connect_failed = True
+                    _LOGGER.debug("BLE session for %s errored: %s", self.serial, exc)
+                    backoff = min(backoff * 2, _BACKOFF_MAX_S)
+                except TimeoutError as exc:
+                    connect_failed = True
+                    _LOGGER.debug("BLE session for %s timed out: %s", self.serial, exc)
+                    backoff = min(backoff * 2, _BACKOFF_MAX_S)
+                finally:
+                    self._client = None
+                    self._available = False
+                    self.async_update_listeners()
+                    with contextlib.suppress(Exception):
+                        await client.disconnect()
+
+                if connect_failed:
+                    await asyncio.sleep(backoff)
+                # On a clean disconnect (no exception), loop right back and
+                # wait for the next advert without a sleep.
+        except asyncio.CancelledError:
+            raise
+
+    async def _run_poll(self, client: BleClient) -> None:
+        """Drive the 3 s poll loop against ``client`` and push snapshots."""
+        version = client.protocol_version
+        async for resp in client.poll_sensor_values(period=_POLL_PERIOD_S):
+            self.data = self._snapshot_from_response(resp, version)
+            self.last_poll_successful = True
+            self._available = True
+            self.async_update_listeners()
+
+    def _snapshot_from_response(
+        self,
+        resp: ChargerSensorValuesResponse,
+        protocol_version: int | None,
+    ) -> BleSnapshot:
         return BleSnapshot(
             serial=self.serial,
             voltage_phase_1=resp.voltage_phase_1_volts,
@@ -175,7 +434,7 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             current_phase_1=resp.current_phase_1_amps,
             current_phase_2=resp.current_phase_2_amps,
             current_phase_3=resp.current_phase_3_amps,
-            protocol_version=client.protocol_version,
+            protocol_version=protocol_version,
         )
 
     def _fire_bond_issue(self) -> None:
@@ -188,67 +447,6 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             translation_key="ble_not_bonded",
             translation_placeholders={"serial": self.serial},
         )
-
-    async def _try_pair(self) -> bool:
-        """Attempt OS-level bonding via bleak. Returns True if successful.
-
-        BlueZ persists the bond to disk; once bonded, the charger's ATT
-        authentication check passes and subsequent connections skip this path.
-        ESPHome BT proxies expose ``pair()`` via the PAIRING feature flag
-        (firmware 2024.6+, ``active: true``); when the proxy lacks that flag
-        ``bleak`` raises ``NotImplementedError``.
-        """
-        source, is_proxy = _scanner_info(self.hass, self.address)
-        _LOGGER.debug(
-            "Attempting BLE pair for %s via scanner=%s (proxy=%s)",
-            self.address,
-            source,
-            is_proxy,
-        )
-        device = async_ble_device_from_address(
-            self.hass, self.address, connectable=True
-        )
-        if device is None:
-            _LOGGER.warning(
-                "BLE pair for %s aborted: device not advertising "
-                "(scanner=%s, proxy=%s)",
-                self.address,
-                source,
-                is_proxy,
-            )
-            return False
-        try:
-            async with BleakClient(device, timeout=15) as raw:
-                # bleak >=1.0 made pair() return None — failures raise. The
-                # bleak_esphome backend's bool return value is swallowed by
-                # the wrapper, so we cannot detect a proxy-reported
-                # paired=False from here. That branch logs at ERROR inside
-                # ``bleak_esphome.backend.client`` directly; surface it by
-                # enabling DEBUG for that logger.
-                await raw.pair()
-        except NotImplementedError as exc:
-            _LOGGER.warning(
-                "BLE pair for %s raised NotImplementedError "
-                "(scanner=%s, proxy=%s): %s. ESPHome BT proxies need "
-                "firmware 2024.6+ with `bluetooth_proxy: active: true`.",
-                self.address,
-                source,
-                is_proxy,
-                exc,
-            )
-            return False
-        except (BleakError, TimeoutError, OSError) as exc:
-            _LOGGER.warning(
-                "BLE pair for %s failed (scanner=%s, proxy=%s): %s: %s",
-                self.address,
-                source,
-                is_proxy,
-                type(exc).__name__,
-                exc,
-            )
-            _LOGGER.debug("BLE pair traceback for %s", self.address, exc_info=exc)
-            return False
-        return True
 
     async def async_dismiss_bond_issue(self) -> None:
         async_delete_issue(self.hass, DOMAIN, f"ble_not_bonded_{self.serial}")
