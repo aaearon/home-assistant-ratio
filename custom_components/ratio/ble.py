@@ -85,9 +85,7 @@ class BleSnapshot:
     protocol_version: int | None
 
 
-def _scanner_info(
-    hass: HomeAssistant, address: str | None
-) -> tuple[str | None, bool]:
+def _scanner_info(hass: HomeAssistant, address: str | None) -> tuple[str | None, bool]:
     """Return ``(scanner_source, is_remote_proxy)`` for ``address``.
 
     Diagnostic-only — used to disambiguate locally-attached adapter failures
