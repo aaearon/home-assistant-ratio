@@ -4,10 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-05-15
+
 ### Fixed
 
 - **BLE candidate picker now validates Ratio manufacturer data** before
-  selecting an advert as a connection target. The previous picker filtered
+  selecting an advert as a connection target ([#34](https://github.com/aaearon/home-assistant-ratio/pull/34)). The previous picker filtered
   only on `local_name == RATIO_<serial>`, so any device advertising the same
   local name could win on RSSI and receive subsequent GATT operations —
   including Wi-Fi credentials passed through `reconfigure_wifi`. Both
@@ -17,7 +19,7 @@ All notable changes to this project will be documented in this file.
   `aioratio.ble.parse_advertisement`), matching the same check the config
   flow already performs at discovery time.
 - **BLE voltage/current entities no longer get stuck `unavailable` while
-  the BT-proxy session is live.** `RatioBleCoordinator` previously inherited
+  the BT-proxy session is live** ([#35](https://github.com/aaearon/home-assistant-ratio/pull/35)). `RatioBleCoordinator` previously inherited
   its `available` flag from `BasePassiveBluetoothCoordinator`, which is
   driven by HA's address-keyed unavailable tracker. When the local hci
   scanner lost sight of the charger's configured (BlueZ-routed) address but
@@ -34,9 +36,11 @@ All notable changes to this project will be documented in this file.
   in diagnostics alongside the configured `address` so operators can see
   both the bound address and the scanner currently in use.
 
+## [0.11.0] — 2026-05-15
+
 ### Changed
 
-- **BLE sensors now update every ~3 s instead of every 1–5 minutes.** The
+- **BLE sensors now update every ~3 s instead of every 1–5 minutes** ([#32](https://github.com/aaearon/home-assistant-ratio/pull/32)). The
   coordinator no longer connects/pairs/disconnects per poll; it now holds a
   single `BleClient` open continuously and consumes
   `aioratio.BleClient.poll_sensor_values(period=3.0)` — matching the cadence
@@ -54,7 +58,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- **BLE poll fails on every cycle when connecting via an ESPHome BT proxy.** The proxy keeps its `is_paired_` flag per-connection and resets it on every disconnect, so the previous `_try_pair` (which paired on a *separate* `BleakClient` and then dropped the connection) succeeded but did not propagate to the next read — the proxy still issued GATT ops with `ESP_GATT_AUTH_REQ_NONE` and the charger rejected them with `status=15` (Insufficient encryption). Fixed in `aioratio==0.10.2` by moving the pair-and-retry into `BleakBleTransport` so it runs on the same `BleakClient` connection as the read. This integration now pins `aioratio[ble]==0.10.2` and the now-redundant `_try_pair` helper + `RatioBleNotBondedError` retry branch are removed from `RatioBleCoordinator._async_update`. A `RatioBleNotBondedError` reaching the coordinator after the upgrade means aioratio's pair-and-retry itself failed (charger rejected SMP, proxy lacks the `PAIRING` feature flag, etc.) — the repair issue still fires.
+- **BLE poll fails on every cycle when connecting via an ESPHome BT proxy.** The proxy keeps its `is_paired_` flag per-connection and resets it on every disconnect, so the previous `_try_pair` (which paired on a *separate* `BleakClient` and then dropped the connection) succeeded but did not propagate to the next read — the proxy still issued GATT ops with `ESP_GATT_AUTH_REQ_NONE` and the charger rejected them with `status=15` (Insufficient encryption). Fixed in `aioratio==0.10.2` (and rolled into the `aioratio[ble]==0.11.0` pin) by moving the pair-and-retry into `BleakBleTransport` so it runs on the same `BleakClient` connection as the read. The now-redundant `_try_pair` helper + `RatioBleNotBondedError` retry branch are removed from `RatioBleCoordinator._async_update`. A `RatioBleNotBondedError` reaching the coordinator after the upgrade means aioratio's pair-and-retry itself failed (charger rejected SMP, proxy lacks the `PAIRING` feature flag, etc.) — the repair issue still fires.
 
 ## [0.10.2] — 2026-05-15
 
