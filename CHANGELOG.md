@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.10.2] — 2026-05-15
+
 ### Fixed
 
 - **BLE pairing failures were silently swallowed ([#27](https://github.com/aaearon/home-assistant-ratio/issues/27)).** `_try_pair` previously caught all exceptions and returned `False` without logging, so an upgrade-needed `NotImplementedError` from an ESPHome BT proxy was indistinguishable from a transient adapter glitch. The helper now (a) narrows the catch to `BleakError`/`TimeoutError`/`OSError` and logs the concrete exception class + message at `WARNING`, and (b) emits a firmware hint on `NotImplementedError` ("ESPHome BT proxies need firmware 2024.6+ with `bluetooth_proxy: active: true`"). A new `_scanner_info` helper tags every pairing-related log with the concrete scanner class, source, and a `proxy=` flag (using HA's public `BaseHaRemoteScanner` marker), giving reports of BLE-via-proxy issues enough signal to classify the failure mode (firmware-too-old vs. transient adapter glitch vs. wrong scanner routing).
