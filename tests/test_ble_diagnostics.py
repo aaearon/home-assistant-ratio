@@ -20,6 +20,7 @@ MAC = "AA:BB:CC:DD:EE:FF"
 def _make_ble_coordinator(
     serial: str = SERIAL,
     address: str = MAC,
+    active_address: str | None = MAC,
     last_poll_successful: bool = True,
     available: bool = True,
 ) -> MagicMock:
@@ -27,6 +28,7 @@ def _make_ble_coordinator(
     coord = MagicMock()
     coord.serial = serial
     coord.address = address
+    coord._active_address = active_address
     coord.last_poll_successful = last_poll_successful
     coord.available = available
     coord.async_dismiss_bond_issue = AsyncMock()
@@ -58,6 +60,9 @@ async def test_diagnostics_includes_ble_section(
     charger_ble = ble_section[SERIAL]
     assert charger_ble["last_poll_successful"] is True
     assert charger_ble["available"] is True
+    # ``active_address`` distinguishes the scanner-currently-in-use from
+    # the configured/bound ``address``. Both are MACs, both are redacted.
+    assert "active_address" in charger_ble
 
 
 @pytest.mark.asyncio
@@ -65,9 +70,10 @@ async def test_diagnostics_address_redacted(
     hass: HomeAssistant,
     setup_integration: MockConfigEntry,
 ) -> None:
-    """BLE coordinator address should be redacted in diagnostics output."""
+    """BLE coordinator address + active_address should be redacted."""
     entry = setup_integration
-    ble_coord = _make_ble_coordinator(address=MAC)
+    active_mac = "79:75:75:A4:A0:45"
+    ble_coord = _make_ble_coordinator(address=MAC, active_address=active_mac)
     entry.runtime_data.ble_coordinators = {SERIAL: ble_coord}
 
     result = await async_get_config_entry_diagnostics(hass, entry)
@@ -76,6 +82,8 @@ async def test_diagnostics_address_redacted(
     assert SERIAL in ble_section
     assert ble_section[SERIAL]["address"] != MAC
     assert ble_section[SERIAL]["address"] == "**REDACTED**"
+    assert ble_section[SERIAL]["active_address"] != active_mac
+    assert ble_section[SERIAL]["active_address"] == "**REDACTED**"
 
 
 @pytest.mark.asyncio

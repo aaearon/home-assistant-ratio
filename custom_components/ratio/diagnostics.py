@@ -30,6 +30,7 @@ TO_REDACT = {
     "chargePointIdentifier",
     "ssid",
     "address",
+    "active_address",
     "gateway",
     "netmask",
 }
@@ -83,6 +84,7 @@ async def async_get_config_entry_diagnostics(
         {
             serial: {
                 "address": ble_coord.address,
+                "active_address": ble_coord._active_address,
                 "last_poll_successful": ble_coord.last_poll_successful,
                 "available": ble_coord.available,
             }

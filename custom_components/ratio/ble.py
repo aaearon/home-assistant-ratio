@@ -85,7 +85,7 @@ class BleSnapshot:
     protocol_version: int | None
 
 
-def _scanner_info(hass: HomeAssistant, address: str) -> tuple[str | None, bool]:
+def _scanner_info(hass: HomeAssistant, address: str | None) -> tuple[str | None, bool]:
     """Return ``(scanner_source, is_remote_proxy)`` for ``address``.
 
     Diagnostic-only — used to disambiguate locally-attached adapter failures
@@ -94,6 +94,8 @@ def _scanner_info(hass: HomeAssistant, address: str) -> tuple[str | None, bool]:
     the returned source string is prefixed with the scanner class so reports
     name the actual backend (e.g. ``ESPHomeScanner:AA:BB:...``).
     """
+    if address is None:
+        return None, False
     try:
         devices = async_scanner_devices_by_address(hass, address, connectable=True)
     except Exception as exc:  # noqa: BLE001 — diagnostic helper, must never raise
@@ -137,12 +139,35 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         self._wifi_lock: asyncio.Lock = asyncio.Lock()
         self._session_task: asyncio.Task[None] | None = None
         self._client: BleClient | None = None
+        # MAC of whichever advert the picker is currently using. Tracked
+        # separately from ``self.address`` (which stays equal to the
+        # configured address the parent's address-keyed callbacks were
+        # registered against) so diagnostics + ``_scanner_info`` can name the
+        # scanner actually serving the link.
+        self._active_address: str | None = None
         self._local_name_unsub: CALLBACK_TYPE | None = None
         # Set whenever a fresh advert (proxy or local) is observed for
         # ``RATIO_<serial>``; cleared at the top of each session attempt so
         # the loop only re-attempts when there's evidence the charger is
         # actually nearby.
         self._wake_event: asyncio.Event = asyncio.Event()
+
+    @property
+    def available(self) -> bool:
+        """Entity-facing availability tracks the live BLE transport.
+
+        The parent ``BasePassiveBluetoothCoordinator`` flips ``self._available``
+        to False when the configured BlueZ address hasn't been seen by HA's
+        Bluetooth manager in ~5 min. When local hci loses the charger but an
+        ESPHome BT proxy is still advertising it under a rotating RPA, the
+        parent's flag goes stuck-False — entities would then read
+        ``unavailable`` even though the session loop's proxy-routed link is
+        live and pushing fresh snapshots every 3 s. Riding directly on
+        ``BleClient.is_connected`` keeps availability synchronised with what
+        the transport actually reports.
+        """
+        client = self._client
+        return client is not None and client.is_connected
 
     @callback
     def async_start(self) -> CALLBACK_TYPE:
@@ -261,8 +286,12 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         and receive subsequent GATT ops — notably the Wi-Fi credentials
         passed through ``reconfigure_wifi``.
 
-        Updates ``self.address`` so ``_scanner_info`` and diagnostics name
-        the scanner now in use.
+        Does not mutate ``self.address``: the parent class captured the
+        configured address by value and registered address-keyed callbacks
+        against it at ``async_start``, so a post-init mutation would only
+        mislead diagnostics. The session loop publishes the picked device's
+        address to ``self._active_address`` for ``_scanner_info`` /
+        diagnostics consumers.
         """
         local_name = f"RATIO_{self.serial}"
         candidates = [
@@ -274,7 +303,6 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         if not candidates:
             return None
         best = max(candidates, key=lambda i: i.rssi or -127)
-        self.address = best.address
         return best.device
 
     async def _async_update(
@@ -341,6 +369,7 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
                 if device is None:
                     # Advert vanished between wake and pick — wait for the next.
                     continue
+                self._active_address = device.address
 
                 client = BleClient(device)
                 connect_failed = False
@@ -353,7 +382,7 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
                     _LOGGER.debug(
                         "BLE session established for %s via %s",
                         self.serial,
-                        self.address,
+                        self._active_address,
                     )
 
                     disconnect_future = client.disconnect_future
@@ -388,10 +417,10 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
                                 await task
                 except RatioBleNotBondedError as exc:
                     connect_failed = True
-                    source, is_proxy = _scanner_info(self.hass, self.address)
+                    source, is_proxy = _scanner_info(self.hass, self._active_address)
                     _LOGGER.warning(
                         "BLE bond unrecoverable for %s (scanner=%s, proxy=%s): %s",
-                        self.address,
+                        self._active_address,
                         source,
                         is_proxy,
                         exc,
