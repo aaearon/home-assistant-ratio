@@ -18,6 +18,7 @@ keeps the wake path alive regardless of which scanner serves the advert.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -205,11 +206,12 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
     async def _await_session_task_drained(self, task: asyncio.Task[None]) -> None:
         try:
             await asyncio.wait_for(task, timeout=_SESSION_TASK_CANCEL_TIMEOUT_S)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
+        except (asyncio.CancelledError, TimeoutError):
             return
         except Exception:  # noqa: BLE001
             _LOGGER.debug(
-                "BLE session task for %s raised during shutdown", self.serial,
+                "BLE session task for %s raised during shutdown",
+                self.serial,
                 exc_info=True,
             )
 
@@ -374,10 +376,8 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
                             if not task.done():
                                 task.cancel()
                         for task in (disconnect_waiter, poll_task):
-                            try:
+                            with contextlib.suppress(asyncio.CancelledError, Exception):
                                 await task
-                            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                                pass
                 except RatioBleNotBondedError as exc:
                     connect_failed = True
                     source, is_proxy = _scanner_info(self.hass, self.address)
@@ -392,11 +392,9 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
                     backoff = _BACKOFF_BOND_S
                 except (RatioBleConnectionError, RatioBleError, BleakError) as exc:
                     connect_failed = True
-                    _LOGGER.debug(
-                        "BLE session for %s errored: %s", self.serial, exc
-                    )
+                    _LOGGER.debug("BLE session for %s errored: %s", self.serial, exc)
                     backoff = min(backoff * 2, _BACKOFF_MAX_S)
-                except asyncio.TimeoutError as exc:
+                except TimeoutError as exc:
                     connect_failed = True
                     _LOGGER.debug("BLE session for %s timed out: %s", self.serial, exc)
                     backoff = min(backoff * 2, _BACKOFF_MAX_S)
@@ -404,10 +402,8 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
                     self._client = None
                     self._available = False
                     self.async_update_listeners()
-                    try:
+                    with contextlib.suppress(Exception):
                         await client.disconnect()
-                    except Exception:  # noqa: BLE001 — best-effort cleanup
-                        pass
 
                 if connect_failed:
                     await asyncio.sleep(backoff)

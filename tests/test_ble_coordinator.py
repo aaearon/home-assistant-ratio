@@ -45,6 +45,7 @@ _stub_serial()
 # Now we can safely import bluetooth-dependent HA modules.
 # ---------------------------------------------------------------------------
 import asyncio  # noqa: E402
+import contextlib  # noqa: E402
 
 from aioratio.ble.models.sensors import ChargerSensorValuesResponse  # noqa: E402
 from aioratio.exceptions import (  # noqa: E402
@@ -226,10 +227,8 @@ async def test_session_loop_fires_bond_issue(hass: HomeAssistant) -> None:
             await asyncio.wait_for(issue_fired.wait(), timeout=1.0)
         finally:
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
 
     mock_create_issue.assert_called_with(
         hass,
@@ -288,10 +287,8 @@ async def test_session_loop_backoff_on_connection_error(hass: HomeAssistant) -> 
             await asyncio.wait_for(second_sleep.wait(), timeout=1.0)
         finally:
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
 
     assert sleeps[0] == 2.0, sleeps
     assert sleeps[1] == 4.0, sleeps
@@ -334,10 +331,8 @@ async def test_session_loop_returns_data_via_run_poll(hass: HomeAssistant) -> No
             await asyncio.sleep(0)
         finally:
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
 
     assert isinstance(coord.data, BleSnapshot)
     assert coord.data.serial == "SN001"
@@ -466,9 +461,7 @@ async def test_pick_best_device_returns_strongest_rssi(hass: HomeAssistant) -> N
     strong = _make_service_info(
         address="79:75:75:A4:A0:45", rssi=-59, source="F4:2D:C9:70:C2:7E"
     )
-    unrelated = _make_service_info(
-        address="BC:10:2F:20:DE:13", name="Fridge", rssi=-50
-    )
+    unrelated = _make_service_info(address="BC:10:2F:20:DE:13", name="Fridge", rssi=-50)
     coord = _make_coordinator(hass)
 
     with patch(
@@ -488,9 +481,7 @@ async def test_pick_best_device_returns_none_when_no_match(
     hass: HomeAssistant,
 ) -> None:
     """If no advert matches ``RATIO_<serial>``, return None — caller raises."""
-    unrelated = _make_service_info(
-        address="BC:10:2F:20:DE:13", name="Fridge", rssi=-50
-    )
+    unrelated = _make_service_info(address="BC:10:2F:20:DE:13", name="Fridge", rssi=-50)
     coord = _make_coordinator(hass)
 
     with patch(
@@ -569,9 +560,7 @@ async def test_async_start_registers_local_name_callback(hass: HomeAssistant) ->
             "custom_components.ratio.ble.async_discovered_service_info",
             return_value=[],
         ),
-        patch.object(
-            hass, "async_create_background_task", side_effect=_swallow_coro
-        ),
+        patch.object(hass, "async_create_background_task", side_effect=_swallow_coro),
     ):
         stop = coord.async_start()
 

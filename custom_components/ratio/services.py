@@ -17,7 +17,10 @@ from aioratio.exceptions import (
 )
 from aioratio.models import ChargeSchedule, ScheduleSlot, Vehicle
 from bleak.exc import BleakError
-from homeassistant.components.bluetooth import async_discovered_service_info
+from homeassistant.components.bluetooth import (
+    BluetoothServiceInfoBleak,
+    async_discovered_service_info,
+)
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -461,38 +464,42 @@ async def _handle_ble_probe(hass: HomeAssistant, call: ServiceCall) -> ServiceRe
     entry_id, serial = pairs[0]
     local_name = f"RATIO_{serial}"
 
-    candidates = []
+    # ``_info`` holds the raw service info (used to construct ``BleClient``);
+    # ``meta`` is the user-visible subset that lands in the response.
+    candidates: list[tuple[BluetoothServiceInfoBleak, dict[str, JsonValueType]]] = []
     for info in async_discovered_service_info(hass, connectable=True):
         if info.name != local_name:
             continue
         scanner = getattr(info.device, "scanner", None)
         scanner_class = type(scanner).__name__ if scanner is not None else None
-        candidates.append(
-            {
-                "address": info.address,
-                "rssi": info.rssi,
-                "scanner_source": info.source,
-                "scanner_class": scanner_class,
-                "_info": info,
-            }
-        )
-    candidates.sort(key=lambda c: c["rssi"] or -127, reverse=True)
+        meta: dict[str, JsonValueType] = {
+            "address": info.address,
+            "rssi": info.rssi,
+            "scanner_source": info.source,
+            "scanner_class": scanner_class,
+        }
+        candidates.append((info, meta))
+    # ``info.rssi`` is ``int | None``; treat missing RSSI as worst-case so the
+    # advert still sorts deterministically.
+    candidates.sort(
+        key=lambda c: c[0].rssi if c[0].rssi is not None else -127, reverse=True
+    )
 
     response: dict[str, JsonValueType] = {
         "serial": serial,
         "entry_id": entry_id,
         "local_name": local_name,
-        "candidates": [{k: v for k, v in c.items() if k != "_info"} for c in candidates],
+        "candidates": [meta for _, meta in candidates],
     }
 
     if not candidates:
         response["status"] = "no_advert"
         return response
 
-    best = candidates[0]
-    response["chosen"] = {k: v for k, v in best.items() if k != "_info"}
+    best_info, best_meta = candidates[0]
+    response["chosen"] = best_meta
 
-    client = BleClient(best["_info"].device)
+    client = BleClient(best_info.device)
     try:
         async with client:
             await client.get_charger_sensor_values()
