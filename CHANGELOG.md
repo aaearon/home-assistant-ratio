@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **BLE sensors now update every ~3 s instead of every 1–5 minutes.** The
+  coordinator no longer connects/pairs/disconnects per poll; it now holds a
+  single `BleClient` open continuously and consumes
+  `aioratio.BleClient.poll_sensor_values(period=3.0)` — matching the cadence
+  the official Ratio app uses (decompiled APK
+  `ChargerInformationRepository.java:236` → `POLL_TIME.DEFAULT_BLE = 3s`).
+  Each yield pushes a fresh `BleSnapshot` to `self.data` and notifies
+  listeners. Combined with a stable `local_name`-keyed advert subscription,
+  reconnects fire reliably even when the chosen scanner is an ESPHome
+  Bluetooth proxy (which routes adverts under rotating RPAs the parent
+  class's address-keyed callback can never resolve). Pins `aioratio[ble]==0.11.0`.
+- The `ratio.reconfigure_wifi` service now re-uses the session loop's live
+  `BleClient` when one is open, falling back to a one-shot connect only when
+  the session is in its reconnect backoff. aioratio's transaction mutex
+  serializes the Wi-Fi command against the running 3 s poll.
+
 ### Fixed
 
 - **BLE poll fails on every cycle when connecting via an ESPHome BT proxy.** The proxy keeps its `is_paired_` flag per-connection and resets it on every disconnect, so the previous `_try_pair` (which paired on a *separate* `BleakClient` and then dropped the connection) succeeded but did not propagate to the next read — the proxy still issued GATT ops with `ESP_GATT_AUTH_REQ_NONE` and the charger rejected them with `status=15` (Insufficient encryption). Fixed in `aioratio==0.10.2` by moving the pair-and-retry into `BleakBleTransport` so it runs on the same `BleakClient` connection as the read. This integration now pins `aioratio[ble]==0.10.2` and the now-redundant `_try_pair` helper + `RatioBleNotBondedError` retry branch are removed from `RatioBleCoordinator._async_update`. A `RatioBleNotBondedError` reaching the coordinator after the upgrade means aioratio's pair-and-retry itself failed (charger rejected SMP, proxy lacks the `PAIRING` feature flag, etc.) — the repair issue still fires.

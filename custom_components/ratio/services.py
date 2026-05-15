@@ -422,30 +422,25 @@ async def _handle_reconfigure_wifi(hass: HomeAssistant, call: ServiceCall) -> No
     # empty string the service schema would otherwise yield.
     password: str | None = call.data.get("password") or None
 
-    ble_device = coordinator._pick_best_device()
-    if ble_device is None:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="ble_connect_failed",
-            translation_placeholders={"serial": serial, "error": "device not found"},
-        )
+    async def _run(client: BleClient) -> None:
+        scan_results = await client.wifi_scan()
+        found_ssids = {ap.ssid for ap in scan_results}
+        if ssid not in found_ssids:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="ssid_not_found",
+                translation_placeholders={"ssid": ssid},
+            )
+        await client.wifi_connect(ssid, password)
 
     try:
-        async with coordinator._wifi_lock:
-            client = BleClient(ble_device)
-            try:
-                async with client:
-                    scan_results = await client.wifi_scan()
-                    found_ssids = {ap.ssid for ap in scan_results}
-                    if ssid not in found_ssids:
-                        raise ServiceValidationError(
-                            translation_domain=DOMAIN,
-                            translation_key="ssid_not_found",
-                            translation_placeholders={"ssid": ssid},
-                        )
-                    await client.wifi_connect(ssid, password)
-            except ServiceValidationError:
-                raise
+        # Re-uses the session loop's live ``BleClient`` if connected; falls
+        # back to a one-shot connect if the session is in backoff. aioratio's
+        # transaction mutex serializes this command against the 3 s sensor
+        # poll on the live path so writes and responses cannot interleave.
+        await coordinator.run_wifi_command(_run)
+    except ServiceValidationError:
+        raise
     except (RatioBleConnectionError, RatioBleError, BleakError) as err:
         raise ServiceValidationError(
             translation_domain=DOMAIN,

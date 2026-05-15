@@ -44,6 +44,8 @@ _stub_serial()
 # ---------------------------------------------------------------------------
 # Now we can safely import bluetooth-dependent HA modules.
 # ---------------------------------------------------------------------------
+import asyncio  # noqa: E402
+
 from aioratio.ble.models.sensors import ChargerSensorValuesResponse  # noqa: E402
 from aioratio.exceptions import (  # noqa: E402
     RatioBleConnectionError,
@@ -75,11 +77,25 @@ def _make_sensor_response(
 
 
 def _make_ble_client_mock(sensor_response: ChargerSensorValuesResponse) -> MagicMock:
+    """Mock BleClient that yields a single sensor response from poll_sensor_values."""
     client = MagicMock()
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=None)
+    client.connect = AsyncMock()
+    client.disconnect = AsyncMock()
     client.get_charger_sensor_values = AsyncMock(return_value=sensor_response)
     client.protocol_version = 2
+    client.is_connected = True
+
+    async def _poll(period: float = 3.0):
+        yield sensor_response
+
+    client.poll_sensor_values = _poll
+    # disconnect_future is awaited by _session_loop alongside the poll task.
+    # A never-resolving future means the poll task will be the one that
+    # finishes (after exhausting the single yield) and exit the wait.
+    loop = asyncio.get_event_loop()
+    client.disconnect_future = loop.create_future()
     return client
 
 
@@ -133,71 +149,89 @@ def _make_coordinator(hass: HomeAssistant) -> RatioBleCoordinator:
     return coord
 
 
+def _stub_coordinator_for_session(coord) -> None:
+    """Wire the minimum attributes ``_session_loop`` reads from the parent.
+
+    The parent ``ActiveBluetoothDataUpdateCoordinator``'s ``__init__`` is
+    stubbed by ``_make_coordinator``, so these attributes are set explicitly
+    here for tests that exercise the session loop.
+    """
+    coord.data = None
+    coord._available = False
+    coord.last_poll_successful = True
+    coord._listeners = {}
+
+
 @pytest.mark.asyncio
-async def test_ble_snapshot_populated(hass: HomeAssistant) -> None:
-    """BleSnapshot should have correctly scaled values from the sensor response."""
+async def test_run_poll_pushes_snapshot_to_self_data(hass: HomeAssistant) -> None:
+    """``_run_poll`` writes a scaled ``BleSnapshot`` to ``self.data`` per yield."""
     from custom_components.ratio.ble import BleSnapshot
 
     sensor_resp = _make_sensor_response()
-    ble_client = _make_ble_client_mock(sensor_resp)
-    service_info = _make_service_info()
-    ble_device = MagicMock()
-
     coord = _make_coordinator(hass)
+    _stub_coordinator_for_session(coord)
 
-    with (
-        patch(
-            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
-            return_value=ble_device,
-        ),
-        patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
-    ):
-        snapshot = await coord._async_update(service_info)
+    listeners: list[None] = []
+    coord.async_update_listeners = MagicMock(side_effect=lambda: listeners.append(None))
 
-    assert isinstance(snapshot, BleSnapshot)
-    assert snapshot.serial == "SN001"
-    assert snapshot.voltage_phase_1 == 230.0
-    assert snapshot.voltage_phase_2 == 231.0
-    assert snapshot.voltage_phase_3 == 229.0
-    assert snapshot.current_phase_1 == 16.0
-    assert snapshot.current_phase_2 is None
-    assert snapshot.current_phase_3 is None
-    assert snapshot.protocol_version == 2
+    client = _make_ble_client_mock(sensor_resp)
+    await coord._run_poll(client)
+
+    assert isinstance(coord.data, BleSnapshot)
+    assert coord.data.serial == "SN001"
+    assert coord.data.voltage_phase_1 == 230.0
+    assert coord.data.voltage_phase_2 == 231.0
+    assert coord.data.voltage_phase_3 == 229.0
+    assert coord.data.current_phase_1 == 16.0
+    assert coord.data.protocol_version == 2
+    assert coord._available is True
+    # Listeners notified at least once per yield.
+    assert listeners
 
 
 @pytest.mark.asyncio
-async def test_bond_error_creates_repair_issue(hass: HomeAssistant) -> None:
-    """A ``RatioBleNotBondedError`` from ``aioratio`` raises ``UpdateFailed``
-    and creates a HA repair issue.
+async def test_session_loop_fires_bond_issue(hass: HomeAssistant) -> None:
+    """``RatioBleNotBondedError`` from ``connect()`` fires the repair issue.
 
-    aioratio>=0.10.2 already pairs-and-retries on the same connection before
-    surfacing this exception. Seeing it here means the bond cannot be
-    established — there is nothing useful left for the coordinator to do
-    except mark the integration broken so the user sees actionable steps.
+    Drives the loop just long enough to execute the connect → except branch,
+    then cancels while it parks in its bond backoff sleep.
     """
-    ble_client = MagicMock()
-    ble_client.__aenter__ = AsyncMock(return_value=ble_client)
-    ble_client.__aexit__ = AsyncMock(return_value=None)
-    ble_client.get_charger_sensor_values = AsyncMock(
-        side_effect=RatioBleNotBondedError("not bonded")
-    )
-    service_info = _make_service_info()
-    ble_device = MagicMock()
-
     coord = _make_coordinator(hass)
+    _stub_coordinator_for_session(coord)
+    coord._wake_event.set()
+
+    bond_client = MagicMock()
+    bond_client.connect = AsyncMock(side_effect=RatioBleNotBondedError("not bonded"))
+    bond_client.disconnect = AsyncMock()
+    bond_client.is_connected = False
+
+    issue_fired = asyncio.Event()
+
+    def _on_create_issue(*args, **kwargs) -> None:
+        issue_fired.set()
 
     with (
         patch(
             "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
-            return_value=ble_device,
+            return_value=MagicMock(),
         ),
-        patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
-        patch("custom_components.ratio.ble.async_create_issue") as mock_create_issue,
-        pytest.raises(UpdateFailed),
+        patch("custom_components.ratio.ble.BleClient", return_value=bond_client),
+        patch(
+            "custom_components.ratio.ble.async_create_issue",
+            side_effect=_on_create_issue,
+        ) as mock_create_issue,
     ):
-        await coord._async_update(service_info)
+        task = asyncio.create_task(coord._session_loop())
+        try:
+            await asyncio.wait_for(issue_fired.wait(), timeout=1.0)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
-    mock_create_issue.assert_called_once_with(
+    mock_create_issue.assert_called_with(
         hass,
         DOMAIN,
         "ble_not_bonded_SN001",
@@ -209,59 +243,104 @@ async def test_bond_error_creates_repair_issue(hass: HomeAssistant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_connection_error_raises_update_failed(hass: HomeAssistant) -> None:
-    """RatioBleConnectionError should raise UpdateFailed."""
-    ble_client = MagicMock()
-    ble_client.__aenter__ = AsyncMock(return_value=ble_client)
-    ble_client.__aexit__ = AsyncMock(return_value=None)
-    ble_client.get_charger_sensor_values = AsyncMock(
-        side_effect=RatioBleConnectionError("timed out")
-    )
-    service_info = _make_service_info()
-    ble_device = MagicMock()
+async def test_session_loop_backoff_on_connection_error(hass: HomeAssistant) -> None:
+    """``RatioBleConnectionError`` from connect grows the backoff exponentially.
 
+    Watches the value of ``asyncio.sleep``'s ``delay`` argument across the
+    first two iterations; first should be ``initial * 2`` (=2.0), second
+    ``initial * 4`` (=4.0). Pre-seeds the wake event between attempts so the
+    loop progresses without us having to manually nudge it.
+    """
     coord = _make_coordinator(hass)
+    _stub_coordinator_for_session(coord)
+    coord._wake_event.set()
+
+    broken_client = MagicMock()
+    broken_client.connect = AsyncMock(side_effect=RatioBleConnectionError("nope"))
+    broken_client.disconnect = AsyncMock()
+    broken_client.is_connected = False
+
+    sleeps: list[float] = []
+    second_sleep = asyncio.Event()
+
+    real_sleep = asyncio.sleep
+
+    async def _record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+        # Re-wake immediately so the next iteration runs.
+        coord._wake_event.set()
+        if len(sleeps) >= 2:
+            second_sleep.set()
+        # Yield once so other tasks (including the test waiter) get a turn
+        # without paying the actual backoff cost.
+        await real_sleep(0)
 
     with (
         patch(
             "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
-            return_value=ble_device,
+            return_value=MagicMock(),
         ),
-        patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
-        pytest.raises(UpdateFailed),
+        patch("custom_components.ratio.ble.BleClient", return_value=broken_client),
+        patch("custom_components.ratio.ble.asyncio.sleep", side_effect=_record_sleep),
     ):
-        await coord._async_update(service_info)
+        task = asyncio.create_task(coord._session_loop())
+        try:
+            await asyncio.wait_for(second_sleep.wait(), timeout=1.0)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    assert sleeps[0] == 2.0, sleeps
+    assert sleeps[1] == 4.0, sleeps
 
 
 @pytest.mark.asyncio
-async def test_cloud_coordinator_data_untouched(hass: HomeAssistant) -> None:
-    """A BLE poll must not touch any cloud coordinator data."""
-    from unittest.mock import sentinel
-
+async def test_session_loop_returns_data_via_run_poll(hass: HomeAssistant) -> None:
+    """End-to-end: a wake → connect → poll → snapshot pushed to ``self.data``."""
     from custom_components.ratio.ble import BleSnapshot
 
     sensor_resp = _make_sensor_response()
-    ble_client = _make_ble_client_mock(sensor_resp)
-    service_info = _make_service_info()
-    ble_device = MagicMock()
+    client = _make_ble_client_mock(sensor_resp)
+
+    snapshot_set = asyncio.Event()
+
+    async def _poll(period: float = 3.0):
+        yield sensor_resp
+        snapshot_set.set()
+        # Hang so the disconnect_future is the one that finishes the wait.
+        await asyncio.Event().wait()
+
+    client.poll_sensor_values = _poll
 
     coord = _make_coordinator(hass)
-
-    cloud_coord = MagicMock()
-    cloud_coord.data = sentinel.cloud_data
+    _stub_coordinator_for_session(coord)
+    coord._wake_event.set()
 
     with (
         patch(
             "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
-            return_value=ble_device,
+            return_value=MagicMock(),
         ),
-        patch("custom_components.ratio.ble.BleClient", return_value=ble_client),
+        patch("custom_components.ratio.ble.BleClient", return_value=client),
     ):
-        snapshot = await coord._async_update(service_info)
+        task = asyncio.create_task(coord._session_loop())
+        try:
+            await asyncio.wait_for(snapshot_set.wait(), timeout=1.0)
+            # Give the next scheduler tick to flush ``self.data`` from the
+            # poll iteration that just yielded the sentinel.
+            await asyncio.sleep(0)
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
-    assert isinstance(snapshot, BleSnapshot)
-    assert cloud_coord.data is sentinel.cloud_data
-    cloud_coord.async_set_updated_data.assert_not_called()
+    assert isinstance(coord.data, BleSnapshot)
+    assert coord.data.serial == "SN001"
 
 
 def test_scanner_info_detects_remote_proxy_scanner() -> None:
@@ -336,25 +415,29 @@ def test_scanner_info_swallows_api_errors() -> None:
     assert is_proxy is False
 
 
-def test_needs_poll_respects_45s_cadence() -> None:
-    """_needs_poll returns False at 30s age, True at None or >=45s."""
-    from custom_components.ratio.ble import RatioBleCoordinator
+def test_needs_poll_false_while_session_task_alive(hass: HomeAssistant) -> None:
+    """``_needs_poll`` returns False whenever the session loop is alive.
 
-    # Patch __init__ to avoid needing a real HA BT stack for this pure logic test.
-    with patch.object(
-        RatioBleCoordinator,
-        "__init__",
-        lambda self, *a, **kw: setattr(self, "serial", "SN001") or None,
-    ):
-        coord = RatioBleCoordinator.__new__(RatioBleCoordinator)
-        coord.serial = "SN001"
-
+    The always-on session is the sole driver of ``self.data`` — the parent's
+    debounced poll path would only race with it. The fallback (return True)
+    only matters when the session task has died.
+    """
+    coord = _make_coordinator(hass)
     service_info = MagicMock()
 
+    alive_task = MagicMock()
+    alive_task.done.return_value = False
+    coord._session_task = alive_task
+    assert coord._needs_poll(service_info, None) is False
+    assert coord._needs_poll(service_info, 100.0) is False
+
+    dead_task = MagicMock()
+    dead_task.done.return_value = True
+    coord._session_task = dead_task
     assert coord._needs_poll(service_info, None) is True
-    assert coord._needs_poll(service_info, 30.0) is False
-    assert coord._needs_poll(service_info, 45.0) is True
-    assert coord._needs_poll(service_info, 100.0) is True
+
+    coord._session_task = None
+    assert coord._needs_poll(service_info, None) is True
 
 
 # ---------------------------------------------------------------------------
@@ -420,49 +503,151 @@ async def test_pick_best_device_returns_none_when_no_match(
 
 
 @pytest.mark.asyncio
-async def test_async_update_uses_strongest_scanner(hass: HomeAssistant) -> None:
-    """_async_update routes the BleClient via the strongest-RSSI scanner."""
+async def test_async_update_returns_cached_data(hass: HomeAssistant) -> None:
+    """``_async_update`` is a no-op fallback — returns ``self.data`` if set."""
     from custom_components.ratio.ble import BleSnapshot
 
-    sensor_resp = _make_sensor_response()
-    ble_client = _make_ble_client_mock(sensor_resp)
-
-    weak = _make_service_info(
-        address="C0:49:EF:F5:AA:FE", rssi=-86, source="40:23:43:1D:C8:EC"
-    )
-    strong = _make_service_info(
-        address="79:75:75:A4:A0:45", rssi=-59, source="F4:2D:C9:70:C2:7E"
-    )
-
     coord = _make_coordinator(hass)
-
-    with (
-        patch(
-            "custom_components.ratio.ble.async_discovered_service_info",
-            return_value=[weak, strong],
-        ),
-        patch(
-            "custom_components.ratio.ble.BleClient", return_value=ble_client
-        ) as ble_client_cls,
-    ):
-        snapshot = await coord._async_update(_make_service_info())
-
-    assert isinstance(snapshot, BleSnapshot)
-    ble_client_cls.assert_called_once_with(strong.device)
+    snapshot = BleSnapshot(
+        serial="SN001",
+        voltage_phase_1=230.0,
+        voltage_phase_2=None,
+        voltage_phase_3=None,
+        current_phase_1=None,
+        current_phase_2=None,
+        current_phase_3=None,
+        protocol_version=2,
+    )
+    coord.data = snapshot
+    result = await coord._async_update(_make_service_info())
+    assert result is snapshot
 
 
 @pytest.mark.asyncio
-async def test_async_update_raises_when_no_advert(hass: HomeAssistant) -> None:
-    """No advert for the local_name → UpdateFailed, no connect attempt."""
+async def test_async_update_raises_when_no_data(hass: HomeAssistant) -> None:
+    """No prior session data → UpdateFailed (signals stale session loop)."""
     coord = _make_coordinator(hass)
+    coord.data = None
+    with pytest.raises(UpdateFailed):
+        await coord._async_update(_make_service_info())
+
+
+@pytest.mark.asyncio
+async def test_async_start_registers_local_name_callback(hass: HomeAssistant) -> None:
+    """``async_start`` adds a stable local-name matcher in addition to parent."""
+    coord = _make_coordinator(hass)
+    parent_stop = MagicMock()
+    local_unsub = MagicMock()
+
+    captured: dict = {}
+
+    def _capture_register(_hass, cb, matcher, mode):
+        captured["matcher"] = matcher
+        captured["cb"] = cb
+        captured["mode"] = mode
+        return local_unsub
+
+    background_task = MagicMock()
+    background_task.done.return_value = True
+
+    def _swallow_coro(coro, _name):
+        # Close the coroutine so we don't leak a "never awaited" warning.
+        coro.close()
+        return background_task
+
     with (
+        patch.object(
+            type(coord).__mro__[1],  # parent class
+            "async_start",
+            lambda self: parent_stop,
+        ),
+        patch(
+            "custom_components.ratio.ble.async_register_callback",
+            side_effect=_capture_register,
+        ),
         patch(
             "custom_components.ratio.ble.async_discovered_service_info",
             return_value=[],
         ),
-        patch("custom_components.ratio.ble.BleClient") as ble_client_cls,
-        pytest.raises(UpdateFailed),
+        patch.object(
+            hass, "async_create_background_task", side_effect=_swallow_coro
+        ),
     ):
-        await coord._async_update(_make_service_info())
+        stop = coord.async_start()
+
+    # Local-name matcher uses RATIO_<serial> and connectable=True.
+    matcher = captured["matcher"]
+    assert dict(matcher).get("local_name") == "RATIO_SN001"
+    assert dict(matcher).get("connectable") is True
+    assert coord._local_name_unsub is local_unsub
+
+    # Composite stop unwinds both subscriptions.
+    stop()
+    local_unsub.assert_called_once()
+    parent_stop.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_wifi_command_reuses_live_client(hass: HomeAssistant) -> None:
+    """When the session loop owns a live client, ``run_wifi_command`` re-uses it."""
+    coord = _make_coordinator(hass)
+    live_client = MagicMock()
+    live_client.is_connected = True
+    coord._client = live_client
+
+    seen: list[object] = []
+
+    async def _fn(client) -> None:
+        seen.append(client)
+
+    with patch("custom_components.ratio.ble.BleClient") as ble_client_cls:
+        await coord.run_wifi_command(_fn)
 
     ble_client_cls.assert_not_called()
+    assert seen == [live_client]
+
+
+@pytest.mark.asyncio
+async def test_run_wifi_command_falls_back_to_one_shot(hass: HomeAssistant) -> None:
+    """When no live client exists, a one-shot ``BleClient`` is constructed."""
+    coord = _make_coordinator(hass)
+    coord._client = None
+
+    one_shot = MagicMock()
+    one_shot.__aenter__ = AsyncMock(return_value=one_shot)
+    one_shot.__aexit__ = AsyncMock(return_value=None)
+
+    seen: list[object] = []
+
+    async def _fn(client) -> None:
+        seen.append(client)
+
+    ble_device = MagicMock()
+    with (
+        patch(
+            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
+            return_value=ble_device,
+        ),
+        patch(
+            "custom_components.ratio.ble.BleClient", return_value=one_shot
+        ) as ble_client_cls,
+    ):
+        await coord.run_wifi_command(_fn)
+
+    ble_client_cls.assert_called_once_with(ble_device)
+    assert seen == [one_shot]
+
+
+@pytest.mark.asyncio
+async def test_run_wifi_command_raises_when_offline(hass: HomeAssistant) -> None:
+    """No live client and no advert → ``RatioBleConnectionError``."""
+    coord = _make_coordinator(hass)
+    coord._client = None
+    with (
+        patch(
+            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
+            return_value=None,
+        ),
+        pytest.raises(RatioBleConnectionError),
+    ):
+        await coord.run_wifi_command(AsyncMock())
