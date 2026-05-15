@@ -6,15 +6,7 @@ Home Assistant integration for [Ratio](https://www.ratio-electric.com/) EV charg
 [![hacs](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 [![CI](https://github.com/aaearon/home-assistant-ratio/actions/workflows/ci.yaml/badge.svg)](https://github.com/aaearon/home-assistant-ratio/actions/workflows/ci.yaml)
 
-## What this does
-
-Adds your Ratio EV charger(s) to Home Assistant via the same cloud API the official mobile app uses. One integration instance per Ratio account; one HA device per charger; entities for live status, energy, and control.
-
-This is an unofficial integration. Not affiliated with Ratio.
-
-## Status
-
-Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/schedule number controls, session history statistics, and dynamic charger discovery have been smoke-tested against a real Ratio Solar charger. See [Known limitations](#known-limitations) for the remaining caveats.
+Adds your Ratio EV charger(s) to Home Assistant via the same cloud API the official mobile app uses. One integration instance per Ratio account; one HA device per charger, discovered automatically. Entities for live status, energy, and control. Smoke-tested against a real Ratio Solar charger; any cloud-connected Ratio charger should work. Unofficial; not affiliated with Ratio. See [Known limitations](#known-limitations) for caveats.
 
 ## Install
 
@@ -28,24 +20,9 @@ Early. Auth, polling, start/stop, charge-mode and active-vehicle selects, solar/
 
 ### Manual
 
-Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above.
+Copy `custom_components/ratio/` into your Home Assistant `config/custom_components/` directory and restart. Then add via the UI as above. Home Assistant installs `aioratio[ble]` from PyPI automatically.
 
-Home Assistant will install `aioratio[ble]==0.10.1` from PyPI automatically; no extra Python deps to manage.
-
-## Removing the Integration
-
-1. Go to **Settings → Devices & Services**.
-2. Find the **Ratio EV Charging** entry and click the three-dot menu (⋮).
-3. Select **Delete**.
-
-Token files (`.storage/ratio_<entry_id>.tokens`) and preference storage are cleaned up automatically when the config entry is removed. No manual file deletion is needed.
-
-## Supported Devices
-
-- **Ratio Solar** — the primary charger model tested with this integration
-- Any Ratio charger connected to the Ratio cloud should work, as the integration uses the same cloud API as the official mobile app
-
-The integration discovers chargers automatically from your Ratio account. Each charger appears as a separate device in Home Assistant.
+To remove: **Settings → Devices & Services → ⋮ → Delete**. Token files and preference storage are cleaned up automatically.
 
 ## What you get
 
@@ -96,76 +73,21 @@ Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle,
 | `ratio.import_session_history` | — | `begin_time`, `end_time` | `{imported: {serial: count}}` |
 | `ratio.reconfigure_wifi` *(BLE only)* | `device_id` | `ssid`, `password?` | — |
 
-Target a specific charger via Home Assistant's device picker (`device_id`).
-
-### Function Summary
-
-| Function | How |
-|----------|-----|
-| Monitor charging state | Binary sensors and state sensors |
-| Start / stop charging | Switch entity or `ratio.start_charge` / `ratio.stop_charge` services |
-| Configure charge mode | Select entity (`Smart`, `SmartSolar`, `PureSolar`) |
-| Set preferred vehicle | Select entity (used for next `start_charge`) |
-| Adjust solar settings | Number entities (sun delays, starting currents) |
-| Adjust current limits | Number entities (min/max charging current) |
-| Manage vehicles | `ratio.add_vehicle` / `ratio.remove_vehicle` services |
-| Set charge schedule | `ratio.set_schedule` service |
-| Import session history | `ratio.import_session_history` service → long-term statistics |
-| Approve firmware updates | Button entity |
-| View diagnostics | Settings → Devices & Services → ⋮ → Download diagnostics |
-
-## Configuration Parameters
-
-The integration exposes several number and select entities that let you configure charger behavior directly from Home Assistant:
-
-| Entity | Type | Description |
-|--------|------|-------------|
-| Charge mode | Select | Switching between `Smart`, `SmartSolar`, and `PureSolar` charging modes |
-| Active vehicle | Select | Which vehicle to associate with the next `start_charge` command (HA-side preference, persisted across restarts) |
-| CPMS | Select | CPMS (Central Point Management System) operator selection from the installer-provided list |
-| Sun on delay | Number | Minutes of sustained solar surplus before solar charging starts |
-| Sun off delay | Number | Minutes after solar surplus drops before solar charging stops |
-| Pure solar starting current | Number | Minimum current (A) to begin a pure-solar session |
-| Smart solar starting current | Number | Minimum current (A) to begin a smart-solar session |
-| Maximum charging current | Number | Upper current limit (A) for the charger |
-| Minimum charging current | Number | Lower current limit (A) for the charger |
-| OCPP enabled | Switch | Enable or disable OCPP on the charger (only available when change is permitted by the API) |
-| Charge point identifier | Text | Writable OCPP charge point ID; maximum length enforced by the API |
-
-Number, select, switch, and text config entities write to the Ratio cloud API when changed.
-
-## Data Update
-
-The integration uses two polling coordinators:
-
-| Coordinator | Interval | What it fetches |
-|-------------|----------|-----------------|
-| Main | 60 seconds | Charger status, user settings, solar settings, vehicles, diagnostics, OCPP settings |
-| History | 300 seconds (5 min) | Completed charge sessions for long-term energy statistics |
-
-After any command (start/stop charge, change settings), the main coordinator triggers an immediate refresh so entity states update without waiting for the next poll cycle.
-
-The integration uses the `cloud_polling` IoT class — cloud communication is always required. The optional Bluetooth path is supplementary (see below).
+Target a specific charger via Home Assistant's device picker (`device_id`). After any command, the coordinator triggers an immediate refresh.
 
 ## Bluetooth (optional)
 
-> **Status:** BLE is shipped in 0.10.0 with the cloud path fully covered by tests, but **end-to-end validation on real hardware is still pending community reports**. The discovery/config-flow path has been smoke-tested; the GATT poll path against a live charger has not been fully verified by the maintainer. If you try it, please [open an issue](https://github.com/aaearon/home-assistant-ratio/issues) with what worked and what didn't.
+> BLE shipped in 0.10.0 with the cloud path fully tested, but **end-to-end validation on real hardware is pending community reports**. The discovery/config-flow path is smoke-tested; the GATT poll path is not maintainer-verified. Please [open an issue](https://github.com/aaearon/home-assistant-ratio/issues) with results.
 
-The Ratio charger exposes a BLE GATT service (Inspiro IPC) that the official mobile app uses alongside the cloud. When a Bluetooth adapter is in range you can enable BLE per charger to unlock:
-
-- **Per-phase voltage and current sensors** — not available from the cloud API at all.
-- **`ratio.reconfigure_wifi`** — reconnect the charger to a different Wi-Fi SSID without the app, useful if your home network changes.
-
-Cloud account setup is required first. BLE is additive — existing installations keep working with no changes.
+The charger exposes a BLE GATT service (Inspiro IPC) the mobile app uses alongside the cloud. Enabling BLE per charger adds **per-phase voltage/current sensors** (not available from the cloud at all) and the **`ratio.reconfigure_wifi`** service. Cloud setup is required first; BLE is additive.
 
 ### Prerequisites
 
-- A Bluetooth adapter on the HA host (or an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy/) in range). Bonded connections via ESPHome proxy are not guaranteed to work — treat as best-effort and test with your hardware.
-- The charger must be **bonded** (OS-level pairing) with the HA host before Home Assistant can connect.
+A Bluetooth adapter on the HA host (or an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy/) in range — best-effort, see caveats below). The charger must be **bonded** (OS-level pairing) with the HA host before HA can connect.
 
 ### Bonding the charger (one-time)
 
-On the HA host, pair the charger via the OS Bluetooth tools. Example with `bluetoothctl` (Linux):
+On the HA host, pair via OS Bluetooth tools. Example with `bluetoothctl`:
 
 ```bash
 bluetoothctl
@@ -175,29 +97,21 @@ trust AA:BB:CC:DD:EE:FF
 scan off
 ```
 
-The charger advertises as `RATIO_P<serial>` (e.g. `RATIO_P00000000013428`). Use the stable identity address (shown after pairing), not the scan-time rotating MAC.
+The charger advertises as `RATIO_P<serial>` (e.g. `RATIO_P00000000013428`). Use the stable identity address shown after pairing, not the rotating scan MAC.
 
-### Enabling BLE in Home Assistant
+### Enabling and operating BLE
 
-After pairing, HA will show a **"Discovered: Ratio Charger \<serial\>"** notification under **Settings → Devices & Services**. Click **Configure** and confirm to enable BLE for that charger. The integration reloads and the per-phase sensors appear within ~45 seconds.
+After pairing, HA shows a **"Discovered: Ratio Charger \<serial\>"** notification under **Settings → Devices & Services**. Click **Configure** to enable; per-phase sensors appear within ~45 s. Disable later via **Configure** on the integration.
 
-To disable BLE for a charger later: open the **Ratio EV Charging** integration, click **Configure**, and uncheck the charger.
+Only one BLE central can connect at a time — opening the Ratio mobile app preempts HA, and BLE entities show **unavailable** until the app releases the link (~45 s). If the bond is lost (factory reset, re-pair from phone), HA creates a **Repair issue** with re-bond instructions.
 
-### One connection at a time
+### Bluetooth proxies (ESPHome) — caveats
 
-The BLE protocol allows only one central to connect at a time. If you open the Ratio mobile app while HA is polling, the app preempts HA's GATT link. BLE entities will show **unavailable** until the app releases the connection and HA reconnects on the next poll (~45 s). This is expected behaviour.
+Pairing via ESPHome proxy is **best-effort**. Constraints:
 
-### Bond loss
-
-If the charger's bond is lost (e.g. after a factory reset or re-pairing from the phone), HA will create a **Repair issue** with instructions to re-bond. Re-bond the charger and then re-enable BLE via the options flow (which clears the issue).
-
-### Bluetooth proxies (ESPHome) — known caveats
-
-Connecting to the Ratio charger via an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy/) is **best-effort**. The charger requires an SMP-bonded GATT link before any sensor data is readable, and proxy-side pairing has constraints the integration cannot work around:
-
-- **ESPHome firmware version.** Active pairing through the proxy needs ESPHome **2024.6 or newer** with `bluetooth_proxy:` set to `active: true` (the PAIRING feature flag). Older firmware exposes `passive: true` only — the proxy can see advertisements but cannot initiate the pair RPC, and the integration will surface this as a `NotImplementedError` in the HA log.
-- **Bond persistence.** Bonds are stored in the proxy's NVS, not in HA. Re-flashing the ESPHome firmware or wiping the proxy's storage drops the bond, after which the integration will hit the same Repair issue and need to re-pair via the proxy.
-- **Diagnosing pairing failures.** Pairing attempts log the scanner backend, source, and a `proxy=True/False` flag — entry-point logs are at `DEBUG`, and any non-trivial failure (including `NotImplementedError` from an old proxy firmware) escalates to `WARNING`. If your BLE sensors stay unavailable, enable debug logging and share the relevant lines on [issue #27](https://github.com/aaearon/home-assistant-ratio/issues/27):
+- **ESPHome firmware.** Active pairing requires **2024.6+** with `bluetooth_proxy: active: true`. Older firmware (`passive: true` only) surfaces as `NotImplementedError` in the HA log.
+- **Bond persistence.** Bonds live in the proxy's NVS, not HA. Re-flashing or wiping the proxy drops the bond and re-triggers the Repair issue.
+- **Diagnosing failures.** Pairing logs the scanner backend, source, and `proxy=True/False`; failures escalate to `WARNING`. If sensors stay unavailable, enable debug logging and share lines on [issue #27](https://github.com/aaearon/home-assistant-ratio/issues/27):
 
   ```yaml
   logger:
@@ -210,11 +124,11 @@ Connecting to the Ratio charger via an [ESPHome Bluetooth proxy](https://esphome
       bleak_esphome: debug
   ```
 
-If your proxy hardware doesn't support active pairing, the cloud path keeps working without BLE — disable BLE for that charger via **Configure** to clear the Repair issue.
+If the proxy doesn't support active pairing, the cloud path keeps working — disable BLE via **Configure** to clear the Repair issue.
 
-## Automation Examples
+## Automation Example
 
-### Start charging when electricity price is low
+Start charging when the electricity price drops, if a vehicle is plugged in:
 
 ```yaml
 automation:
@@ -233,57 +147,7 @@ automation:
           entity_id: switch.ratio_<serial>_charging
 ```
 
-### Notify when a charging session completes
-
-```yaml
-automation:
-  - alias: "Notify charging complete"
-    trigger:
-      - platform: state
-        entity_id: binary_sensor.ratio_<serial>_charging
-        from: "on"
-        to: "off"
-    action:
-      - service: notify.mobile_app
-        data:
-          title: "Charging complete"
-          message: >
-            Session finished. Energy delivered:
-            {{ states('sensor.ratio_<serial>_last_session_energy') }} Wh
-```
-
-### Switch to solar mode during the day
-
-```yaml
-automation:
-  - alias: "Solar charging during daytime"
-    trigger:
-      - platform: sun
-        event: sunrise
-        offset: "+01:00:00"
-    action:
-      - service: select.select_option
-        target:
-          entity_id: select.ratio_<serial>_charge_mode
-        data:
-          option: "PureSolar"
-```
-
-Replace `<serial>` with your charger's serial number (lowercase). You can find the actual entity IDs in **Settings > Devices & Services > Ratio EV Charging > Entities**.
-
-## Use Cases
-
-### Solar-optimized charging
-
-Use the `PureSolar` or `SmartSolar` charge mode to charge your EV primarily from solar panels. Adjust the sun on/off delay and starting current settings to match your solar installation's characteristics.
-
-### Scheduled charging
-
-Use the `ratio.set_schedule` service to set weekly charging windows, e.g. only charge during off-peak hours. Combine with automations to dynamically adjust the schedule based on energy prices.
-
-### Multi-vehicle management
-
-Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle select to control which vehicle gets attributed to the next charging session. The preferred vehicle is persisted per charger across restarts.
+Replace `<serial>` with your charger's serial number (lowercase); find actual entity IDs under **Settings → Devices & Services → Ratio EV Charging → Entities**.
 
 ## How it works
 
@@ -299,7 +163,7 @@ Register multiple vehicles with `ratio.add_vehicle` and use the Active Vehicle s
 +--------------------|-----+
                      v
               +---------------+
-              |   aioratio    |   <-- pinned: aioratio==0.9.1
+              |   aioratio    |   <-- pinned in manifest.json
               |  (PyPI lib)   |
               +-------|-------+
                       v
@@ -369,7 +233,7 @@ logger:
 ```bash
 git clone https://github.com/aaearon/home-assistant-ratio
 cd home-assistant-ratio
-pip install pytest-homeassistant-custom-component aioratio==0.9.1 ruff mypy
+pip install pytest-homeassistant-custom-component aioratio ruff mypy
 pytest
 ruff check custom_components tests   # lint
 ruff format custom_components tests  # format
@@ -382,26 +246,11 @@ mocked `RatioClient`. Coordinator tests call
 `async_config_entry_first_refresh()` / `async_refresh()` (not the private
 `_async_update_data()`). Time-dependent tests use the `freezer` fixture.
 
-Bumping the library:
+Bumping the library: land changes in [`aioratio`](https://github.com/aaearon/aioratio), tag a release; then bump the `requirements` pin and `version` in `custom_components/ratio/manifest.json`. The pin is `==`, matching HA Core convention.
 
-1. Land changes in [`aioratio`](https://github.com/aaearon/aioratio), tag a release, watch CI publish to PyPI.
-2. Update `custom_components/ratio/manifest.json` `requirements` pin (e.g. `"aioratio==0.5.0"`).
-3. Bump `manifest.json` `version` and tag the integration release.
+## Notes for contributors
 
-The pin is `==`, not `>=`, matching HA Core convention.
-
-## Notes for LLMs and contributors
-
-The integration is intentionally a thin shell over `aioratio`. If you find yourself reaching for `boto3`, `warrant`, or HTTP code inside this repo, that work belongs in the library, not here. Cross-check the library's surface at https://github.com/aaearon/aioratio.
-
-Files of interest:
-
-- `custom_components/ratio/__init__.py` — entry setup/teardown, token store wiring, platform forwarding.
-- `custom_components/ratio/coordinator.py` — single `DataUpdateCoordinator` per account; classifies `RatioAuthError` → `ConfigEntryAuthFailed`.
-- `custom_components/ratio/config_flow.py` — user step + reauth.
-- `custom_components/ratio/sensor.py`, `binary_sensor.py`, `switch.py`, `select.py`, `number.py`, `button.py`, `text.py` — `CoordinatorEntity` subclasses keyed by serial.
-- `custom_components/ratio/statistics.py` — long-term energy statistics from session history.
-- `custom_components/ratio/diagnostics.py` — redaction set.
+The integration is intentionally a thin shell over [`aioratio`](https://github.com/aaearon/aioratio). If you find yourself reaching for `boto3`, `warrant`, or HTTP code inside this repo, that work belongs in the library, not here.
 
 ## License
 
