@@ -6,7 +6,13 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- **BLE sensors now update every ~3 s instead of every 1–5 minutes.** The
+- **BLE poll cadence tuned from 3 s → 1 s.** Verified live: per-poll
+  round-trip ≈ 1.3 s through the ESPHome BT proxy on charger
+  `P00000000013428` with no observed retries. Faster than the official
+  Ratio app's 3 s cadence — easier real-time tracking for load-balancing
+  and solar surplus automations. If a charger's firmware turns out to
+  rate-limit IPC requests at a lower bound, revert this constant.
+- **BLE sensors now update every ~1 s instead of every 1–5 minutes.** The
   coordinator no longer connects/pairs/disconnects per poll; it now holds a
   single `BleClient` open continuously and consumes
   `aioratio.BleClient.poll_sensor_values(period=3.0)` — matching the cadence
