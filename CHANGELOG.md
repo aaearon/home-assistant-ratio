@@ -16,6 +16,23 @@ All notable changes to this project will be documented in this file.
   Ratio's Bluetooth SIG Company Identifier `0x0BFF` (validated via
   `aioratio.ble.parse_advertisement`), matching the same check the config
   flow already performs at discovery time.
+- **BLE voltage/current entities no longer get stuck `unavailable` while
+  the BT-proxy session is live.** `RatioBleCoordinator` previously inherited
+  its `available` flag from `BasePassiveBluetoothCoordinator`, which is
+  driven by HA's address-keyed unavailable tracker. When the local hci
+  scanner lost sight of the charger's configured (BlueZ-routed) address but
+  an ESPHome Bluetooth proxy was still serving it under a rotating RPA, the
+  tracker flipped the flag to False indefinitely — entities went stuck
+  `unavailable` even though the always-on session loop held an open
+  proxy-routed link and was pushing fresh snapshots every 3 s. The
+  coordinator now overrides `available` to ride on `BleClient.is_connected`
+  directly, so entity availability tracks the live transport rather than
+  HA's address-keyed advert bookkeeping. Related: `_pick_best_device` no
+  longer mutates `self.address` (the parent class had already captured it
+  by value, so the mutation only misled diagnostics); the picked device's
+  MAC is now tracked on `RatioBleCoordinator._active_address` and surfaced
+  in diagnostics alongside the configured `address` so operators can see
+  both the bound address and the scanner currently in use.
 
 ### Changed
 

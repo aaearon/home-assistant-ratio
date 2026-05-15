@@ -121,7 +121,9 @@ def _make_service_info(
     info.name = name
     info.rssi = rssi
     info.source = source
-    info.device = MagicMock(name=f"BLEDevice({address})")
+    device_mock = MagicMock(name=f"BLEDevice({address})")
+    device_mock.address = address
+    info.device = device_mock
     info.connectable = True
     info.manufacturer_data = (
         {0x0BFF: b"\x03"} if manufacturer_data is None else manufacturer_data
@@ -183,6 +185,7 @@ async def test_run_poll_pushes_snapshot_to_self_data(hass: HomeAssistant) -> Non
     coord.async_update_listeners = MagicMock(side_effect=lambda: listeners.append(None))
 
     client = _make_ble_client_mock(sensor_resp)
+    coord._client = client
     await coord._run_poll(client)
 
     assert isinstance(coord.data, BleSnapshot)
@@ -192,7 +195,12 @@ async def test_run_poll_pushes_snapshot_to_self_data(hass: HomeAssistant) -> Non
     assert coord.data.voltage_phase_3 == 229.0
     assert coord.data.current_phase_1 == 16.0
     assert coord.data.protocol_version == 2
+    # Internal address-keyed bookkeeping still flips True (parent class
+    # reads ``_available`` from its address callback path).
     assert coord._available is True
+    # The publicly observable availability now rides on the live client's
+    # transport state via the overridden ``available`` property.
+    assert coord.available is True
     # Listeners notified at least once per yield.
     assert listeners
 
@@ -478,9 +486,12 @@ async def test_pick_best_device_returns_strongest_rssi(hass: HomeAssistant) -> N
         device = coord._pick_best_device()
 
     assert device is strong.device
-    # self.address is updated so diagnostics + _scanner_info reflect the
-    # scanner actually being used.
-    assert coord.address == "79:75:75:A4:A0:45"
+    # The picker no longer mutates ``self.address`` — it stays equal to the
+    # configured address the parent's address-keyed callbacks registered
+    # against. The picked device's own address is what the session loop will
+    # publish as ``_active_address``.
+    assert device.address == "79:75:75:A4:A0:45"
+    assert coord.address == "AA:BB:CC:DD:EE:FF"
 
 
 @pytest.mark.asyncio
@@ -525,7 +536,8 @@ async def test_pick_best_device_rejects_name_only_spoof(hass: HomeAssistant) -> 
         device = coord._pick_best_device()
 
     assert device is real.device
-    assert coord.address == "79:75:75:A4:A0:45"
+    assert device.address == "79:75:75:A4:A0:45"
+    assert coord.address == "AA:BB:CC:DD:EE:FF"
 
 
 @pytest.mark.asyncio
@@ -687,6 +699,148 @@ async def test_run_wifi_command_falls_back_to_one_shot(hass: HomeAssistant) -> N
 
     ble_client_cls.assert_called_once_with(ble_device)
     assert seen == [one_shot]
+
+
+# ---------------------------------------------------------------------------
+# Availability override — entity ``available`` follows the live BLE
+# transport, not the parent's address-keyed advert tracker.
+#
+# Reason: ``BasePassiveBluetoothCoordinator.available`` flips to False when
+# the configured BlueZ address hasn't been seen in ~5 min. When the local
+# hci scanner loses sight of the charger but an ESPHome BT proxy is still
+# advertising it, the parent's flag goes stuck-False and entities go
+# permanently ``unavailable`` even though the session loop holds an open
+# proxy-routed link. Riding on ``BleClient.is_connected`` instead keeps
+# availability synchronised with what the link transport actually reports.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_available_false_with_no_client(hass: HomeAssistant) -> None:
+    """No live ``BleClient`` → ``available`` is False."""
+    coord = _make_coordinator(hass)
+    coord._client = None
+    assert coord.available is False
+
+
+@pytest.mark.asyncio
+async def test_available_true_when_client_connected(hass: HomeAssistant) -> None:
+    """A live client whose transport reports connected → ``available`` is True."""
+    coord = _make_coordinator(hass)
+    client = MagicMock()
+    client.is_connected = True
+    coord._client = client
+    assert coord.available is True
+
+
+@pytest.mark.asyncio
+async def test_available_false_when_client_disconnected(hass: HomeAssistant) -> None:
+    """Client present but transport reports disconnected → ``available`` is False."""
+    coord = _make_coordinator(hass)
+    client = MagicMock()
+    client.is_connected = False
+    coord._client = client
+    assert coord.available is False
+
+
+@pytest.mark.asyncio
+async def test_available_independent_of_parent_unavailable(
+    hass: HomeAssistant,
+) -> None:
+    """Parent's address-keyed ``_available=False`` must not drag us down.
+
+    Regression guard: previously the coordinator inherited availability from
+    ``BasePassiveBluetoothCoordinator.available`` → ``self._available``, which
+    HA's address-keyed ``_async_handle_unavailable`` pins to False when the
+    configured BlueZ address times out — even when an ESPHome proxy is still
+    serving the charger and the session loop's client is live.
+    """
+    coord = _make_coordinator(hass)
+    client = MagicMock()
+    client.is_connected = True
+    coord._client = client
+    coord._available = False  # simulate parent address-timeout flip
+    assert coord.available is True
+
+
+@pytest.mark.asyncio
+async def test_pick_best_device_does_not_mutate_address(hass: HomeAssistant) -> None:
+    """``_pick_best_device`` must not mutate ``self.address``.
+
+    The parent ``BasePassiveBluetoothCoordinator`` captured the configured
+    address by value at ``_async_start`` and registered address-keyed
+    callbacks against it. Mutating ``self.address`` afterwards only misleads
+    diagnostics — the parent's callbacks were never re-keyed. Scanner
+    selection is now tracked separately via ``_active_address``.
+    """
+    strong = _make_service_info(
+        address="79:75:75:A4:A0:45", rssi=-59, source="F4:2D:C9:70:C2:7E"
+    )
+    coord = _make_coordinator(hass)
+    original_address = coord.address
+
+    with patch(
+        "custom_components.ratio.ble.async_discovered_service_info",
+        return_value=[strong],
+    ):
+        device = coord._pick_best_device()
+
+    assert device is strong.device
+    assert device.address == "79:75:75:A4:A0:45"
+    assert coord.address == original_address
+
+
+@pytest.mark.asyncio
+async def test_session_loop_sets_active_address(hass: HomeAssistant) -> None:
+    """One iteration of ``_session_loop`` records the picked device's address.
+
+    ``_active_address`` is what diagnostics and ``_scanner_info`` should read
+    to name the scanner currently serving the link; ``self.address`` stays
+    pinned to the configured value so the parent's address-keyed callbacks
+    remain valid.
+    """
+    sensor_resp = _make_sensor_response()
+    client = _make_ble_client_mock(sensor_resp)
+    active_seen = asyncio.Event()
+
+    async def _poll(period: float = 3.0):
+        active_seen.set()
+        # Hang so the disconnect_future doesn't fire and the loop iteration
+        # stays in its connected branch.
+        await asyncio.Event().wait()
+        yield sensor_resp
+
+    client.poll_sensor_values = _poll
+
+    coord = _make_coordinator(hass)
+    _stub_coordinator_for_session(coord)
+    coord._wake_event.set()
+
+    picked_device = MagicMock()
+    picked_device.address = "79:75:75:A4:A0:45"
+
+    with (
+        patch(
+            "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
+            return_value=picked_device,
+        ),
+        patch("custom_components.ratio.ble.BleClient", return_value=client),
+    ):
+        task = asyncio.create_task(coord._session_loop())
+        try:
+            await asyncio.wait_for(active_seen.wait(), timeout=1.0)
+            # Yield once so any post-pick attribute writes settle before
+            # we read them.
+            await asyncio.sleep(0)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    assert coord._active_address == "79:75:75:A4:A0:45"
+    # ``self.address`` is untouched — it stays the configured value used
+    # when the parent registered its address-keyed callbacks.
+    assert coord.address == "AA:BB:CC:DD:EE:FF"
 
 
 @pytest.mark.asyncio
