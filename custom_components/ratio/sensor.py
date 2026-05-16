@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from aioratio.models import ChargerOverview
+from aioratio.models import ChargerOverview, InstallerOcppSettings
 from aioratio.models.diagnostics import ChargerDiagnostics
 from aioratio.models.history import Session
 from homeassistant.components.bluetooth.passive_update_coordinator import (
@@ -112,10 +112,6 @@ class RatioDiagnosticSensorDescription(SensorEntityDescription):
     """Describes a Ratio diagnostic sensor backed by ChargerDiagnostics."""
 
     value_fn: Callable[[ChargerDiagnostics], Any] = field(default=lambda _: None)
-
-
-def _pi(d: ChargerDiagnostics) -> Any:
-    return d.product_information
 
 
 def _mc(d: ChargerDiagnostics) -> Any:
@@ -509,7 +505,7 @@ class RatioSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
 
     @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return super().available
+        return super().available and self._overview is not None
 
     @property
     def native_value(self) -> Any:  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -550,14 +546,18 @@ class RatioDiagnosticSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
         )
 
     @property
+    def _diagnostics(self) -> ChargerDiagnostics | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.diagnostics.get(self._serial)
+
+    @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return super().available
+        return super().available and self._diagnostics is not None
 
     @property
     def native_value(self) -> Any:  # pyright: ignore[reportIncompatibleVariableOverride]
-        if self.coordinator.data is None:
-            return None
-        diag = self.coordinator.data.diagnostics.get(self._serial)
+        diag = self._diagnostics
         if diag is None:
             return None
         desc = cast(RatioDiagnosticSensorDescription, self.entity_description)
@@ -590,14 +590,20 @@ class RatioOcppSensor(CoordinatorEntity[RatioCoordinator], SensorEntity):
         )
 
     @property
+    def _ocpp_settings(self) -> InstallerOcppSettings | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.ocpp_settings.get(self._serial)
+
+    @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return super().available
+        return super().available and self._ocpp_settings is not None
 
     @property
     def native_value(self) -> Any:  # pyright: ignore[reportIncompatibleVariableOverride]
-        if self.coordinator.data is None:
+        settings = self._ocpp_settings
+        if settings is None:
             return None
-        settings = self.coordinator.data.ocpp_settings.get(self._serial)
         desc = cast(RatioOcppSensorDescription, self.entity_description)
         try:
             return desc.value_fn(settings)
@@ -629,7 +635,14 @@ class RatioLastSessionSensor(CoordinatorEntity[RatioHistoryCoordinator], SensorE
 
     @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return super().available
+        # Gate on the *main* coordinator's view of the charger, not on the
+        # history coordinator's data: a freshly-added charger with no
+        # completed sessions yet is a perfectly valid entity that should
+        # render its state as ``unknown``, not ``unavailable``.
+        if not super().available:
+            return False
+        main = self.coordinator._main_coordinator
+        return main.data is not None and self._serial in main.data.chargers
 
     @property
     def native_value(self) -> Any:  # pyright: ignore[reportIncompatibleVariableOverride]

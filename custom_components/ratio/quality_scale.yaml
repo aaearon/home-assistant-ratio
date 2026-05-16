@@ -38,15 +38,13 @@ rules:
   # Gold
   devices: done
   diagnostics: done
-  discovery:
-    status: exempt
-    comment: >-
-      Cloud-polling integration; chargers are not discoverable on the local
-      network. Devices are discovered via the Ratio cloud API after login.
+  discovery: done
   discovery-update-info:
     status: exempt
     comment: >-
-      No local network discovery; not applicable to cloud-polling integrations.
+      BLE adverts are matched on stable ``local_name``; HA's bluetooth scanner
+      tracks address changes (RPA rotation) internally, so the integration has
+      no `discovery_update_info` payload of its own to maintain.
   docs-data-update: done
   docs-examples: done
   docs-known-limitations: done

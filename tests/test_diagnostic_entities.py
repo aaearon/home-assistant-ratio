@@ -253,3 +253,65 @@ def test_binary_sensor_resilient_to_missing_network_status() -> None:
     assert _diag_binary(coord, "ethernet_connected").is_on is None
     assert _diag_binary(coord, "time_synchronized").is_on is None
     assert _diag_binary(coord, "backend_connected").is_on is True
+
+
+# ---------------------------------------------------------------------------
+# Availability when the charger has vanished from the cloud
+# ---------------------------------------------------------------------------
+
+
+def test_diagnostic_sensor_unavailable_when_diag_missing() -> None:
+    """Diagnostic sensors must report unavailable when the charger has no diag entry."""
+    coord = MagicMock()
+    coord.last_update_success = True
+    # Charger present but no diagnostics for this serial.
+    coord.data = RatioData(
+        chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
+        diagnostics={},
+    )
+    assert _diag_sensor(coord, "cpc_serial_number").available is False
+
+
+def test_diagnostic_binary_sensor_unavailable_when_diag_missing() -> None:
+    coord = MagicMock()
+    coord.last_update_success = True
+    coord.data = RatioData(
+        chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
+        diagnostics={},
+    )
+    assert _diag_binary(coord, "backend_connected").available is False
+
+
+def test_ocpp_sensor_unavailable_when_settings_missing() -> None:
+    coord = MagicMock()
+    coord.last_update_success = True
+    coord.data = RatioData(
+        chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
+        ocpp_settings={},
+    )
+    assert _ocpp_sensor(coord, "charge_point_identifier").available is False
+
+
+def test_ratio_sensor_unavailable_when_charger_missing() -> None:
+    """RatioSensor must report unavailable when its serial drops from the cloud."""
+    from custom_components.ratio.sensor import SENSOR_DESCRIPTIONS, RatioSensor
+
+    coord = MagicMock()
+    coord.last_update_success = True
+    coord.data = RatioData(chargers={})
+
+    desc = SENSOR_DESCRIPTIONS[0]
+    sensor = RatioSensor(coord, SERIAL, desc)
+    assert sensor.available is False
+
+
+def test_ratio_select_base_unavailable_when_charger_missing() -> None:
+    """_RatioSelectBase.available must reject when serial is no longer in chargers."""
+    from custom_components.ratio.select import RatioChargeModeSelect
+
+    coord = MagicMock()
+    coord.last_update_success = True
+    coord.data = RatioData(chargers={})
+
+    sel = RatioChargeModeSelect(coord, MagicMock(), SERIAL)
+    assert sel.available is False

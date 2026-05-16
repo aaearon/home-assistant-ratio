@@ -13,7 +13,6 @@ from __future__ import annotations
 # break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
 # the same dynamic-property pattern. The variance error is structurally
 # unavoidable from this side of the HA boundary.
-import logging
 from dataclasses import replace
 from typing import Any
 
@@ -32,8 +31,6 @@ from .const import DOMAIN
 from .coordinator import RatioCoordinator
 
 PARALLEL_UPDATES = 1
-
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(

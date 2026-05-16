@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from aioratio.models import Vehicle
+from aioratio.models import ChargerOverview, Vehicle
 from aioratio.models.history import Session, TimeData
 
+from custom_components.ratio.coordinator import RatioData
 from custom_components.ratio.sensor import (
     LAST_SESSION_DESCRIPTIONS,
     RatioLastSessionSensor,
@@ -35,10 +36,17 @@ def _session(
 
 def _make_history_coordinator(
     sessions_by_serial: dict[str, list[Session]],
+    main_chargers: list[str] | None = None,
 ) -> MagicMock:
     coord = MagicMock()
     coord.data = sessions_by_serial
     coord.last_update_success = True
+    main = MagicMock()
+    chargers = main_chargers if main_chargers is not None else list(sessions_by_serial)
+    main.data = RatioData(
+        chargers={s: ChargerOverview.from_dict({"serialNumber": s}) for s in chargers}
+    )
+    coord._main_coordinator = main
     return coord
 
 
@@ -85,3 +93,30 @@ def test_last_session_handles_missing_charger() -> None:
 def test_last_session_energy_has_no_state_class() -> None:
     desc = next(d for d in LAST_SESSION_DESCRIPTIONS if d.key == "last_session_energy")
     assert desc.state_class is None
+
+
+# ---------------------------------------------------------------------------
+# Availability: distinguish "serial known, no sessions yet" from "serial gone".
+# ---------------------------------------------------------------------------
+
+
+def test_last_session_available_when_charger_known_but_no_sessions() -> None:
+    """A freshly-added charger with empty history must render available, not unavailable.
+
+    Regression guard: before the fix, the sensor reported ``unavailable`` while
+    waiting for the first completed session, masking a perfectly healthy charger.
+    """
+    history = _make_history_coordinator({"SN001": []}, main_chargers=["SN001"])
+    entities = _by_key("SN001", history)
+    for e in entities.values():
+        assert e.available is True
+        # State value is still None until a session lands.
+        assert e.native_value is None
+
+
+def test_last_session_unavailable_when_charger_removed_from_cloud() -> None:
+    """When the charger disappears from the main coordinator, mark unavailable."""
+    history = _make_history_coordinator({"SN001": [_session()]}, main_chargers=[])
+    entities = _by_key("SN001", history)
+    for e in entities.values():
+        assert e.available is False

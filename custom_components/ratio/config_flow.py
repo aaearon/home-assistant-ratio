@@ -168,6 +168,8 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
         self._ble_address = discovery_info.address
 
         # Find a loaded cloud entry that knows about this charger.
+        # Limitation: when the same charger appears under two cloud accounts, the
+        # first loaded entry is selected.
         for entry in self.hass.config_entries.async_entries(DOMAIN):
             if not hasattr(entry, "runtime_data"):
                 continue

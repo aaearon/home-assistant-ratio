@@ -53,9 +53,9 @@ async def async_get_config_entry_diagnostics(
     """Return diagnostics for a config entry."""
     coordinator = entry.runtime_data.coordinator
     # async_redact_data redacts by field name, not by dict key. Coordinator
-    # data is keyed by charger serial, so emit as a list to avoid leaking
-    # serials as top-level keys; serial_number inside each entry is in
-    # TO_REDACT and gets redacted normally.
+    # data and ble_coordinators are keyed by charger serial, so emit as a
+    # list to avoid leaking serials as top-level keys; serial_number inside
+    # each entry is in TO_REDACT and gets redacted normally.
     data = coordinator.data
     chargers = [_to_jsonable(ov) for ov in data.chargers.values()] if data else []
     user_settings = (
@@ -81,15 +81,16 @@ async def async_get_config_entry_diagnostics(
         entry.runtime_data, "ble_coordinators", {}
     )
     ble_section = async_redact_data(
-        {
-            serial: {
+        [
+            {
+                "serial_number": serial,
                 "address": ble_coord.address,
                 "active_address": ble_coord._active_address,
                 "last_poll_successful": ble_coord.last_poll_successful,
                 "available": ble_coord.available,
             }
             for serial, ble_coord in ble_coordinators.items()
-        },
+        ],
         TO_REDACT,
     )
 

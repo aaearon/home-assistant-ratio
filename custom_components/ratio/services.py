@@ -172,13 +172,15 @@ IMPORT_SESSION_HISTORY_SCHEMA = vol.Schema(
 
 RECONFIGURE_WIFI_SCHEMA = vol.Schema(
     {
-        vol.Required("device_id"): cv.string,
+        vol.Required("device_id"): vol.Any(cv.string, [cv.string]),
         vol.Required("ssid"): cv.string,
         vol.Optional("password"): cv.string,
     }
 )
 
-BLE_PROBE_SCHEMA = vol.Schema({vol.Required("device_id"): cv.string})
+BLE_PROBE_SCHEMA = vol.Schema(
+    {vol.Required("device_id"): vol.Any(cv.string, [cv.string])}
+)
 
 
 def _resolve_serials(hass: HomeAssistant, call: ServiceCall) -> list[tuple[str, str]]:
@@ -396,10 +398,30 @@ async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
         await coordinator.request_command(client.set_charge_schedule, serial, schedule)
 
 
+def _require_single_device(
+    pairs: list[tuple[str, str]], service: str
+) -> tuple[str, str]:
+    """Reject calls passing != 1 device to an inherently single-device service.
+
+    The schema permits a list form for consistency with the other services
+    (and the HA target selector), but the BLE-side handlers can only address
+    one charger per call. An empty list — which the schema permits — would
+    otherwise IndexError on ``pairs[0]``; surface a clear validation error.
+    """
+    if len(pairs) != 1:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="single_device_required",
+            translation_placeholders={"service": service, "count": str(len(pairs))},
+        )
+    return pairs[0]
+
+
 async def _handle_reconfigure_wifi(hass: HomeAssistant, call: ServiceCall) -> None:
     """Reconnect a Ratio charger to a Wi-Fi network via BLE."""
-    pairs = _resolve_serials(hass, call)
-    entry_id, serial = pairs[0]
+    entry_id, serial = _require_single_device(
+        _resolve_serials(hass, call), SERVICE_RECONFIGURE_WIFI
+    )
 
     entry = hass.config_entries.async_get_entry(entry_id)
     if entry is None:
@@ -461,8 +483,9 @@ async def _handle_ble_probe(hass: HomeAssistant, call: ServiceCall) -> ServiceRe
     structured response listing every advert seen for ``RATIO_<serial>``,
     which scanner is serving it, and the outcome of a single connect+read.
     """
-    pairs = _resolve_serials(hass, call)
-    entry_id, serial = pairs[0]
+    entry_id, serial = _require_single_device(
+        _resolve_serials(hass, call), SERVICE_BLE_PROBE
+    )
     local_name = f"RATIO_{serial}"
 
     # ``_info`` holds the raw service info (used to construct ``BleClient``);

@@ -264,14 +264,18 @@ class RatioDiagnosticBinarySensor(
         )
 
     @property
+    def _diagnostics(self) -> ChargerDiagnostics | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.diagnostics.get(self._serial)
+
+    @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return super().available
+        return super().available and self._diagnostics is not None
 
     @property
     def is_on(self) -> bool | None:  # pyright: ignore[reportIncompatibleVariableOverride]
-        if self.coordinator.data is None:
-            return None
-        diag = self.coordinator.data.diagnostics.get(self._serial)
+        diag = self._diagnostics
         if diag is None:
             return None
         desc = cast(RatioDiagnosticBinarySensorDescription, self.entity_description)
@@ -304,14 +308,18 @@ class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity)
         )
 
     @property
+    def _overview(self) -> ChargerOverview | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.chargers.get(self._serial)
+
+    @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return super().available
+        return super().available and self._overview is not None
 
     @property
     def is_on(self) -> bool | None:  # pyright: ignore[reportIncompatibleVariableOverride]
-        if self.coordinator.data is None:
-            return None
-        ov = self.coordinator.data.chargers.get(self._serial)
+        ov = self._overview
         if ov is None:
             return None
         desc = cast(RatioBinarySensorEntityDescription, self.entity_description)
@@ -324,9 +332,9 @@ class RatioBinarySensor(CoordinatorEntity[RatioCoordinator], BinarySensorEntity)
     def extra_state_attributes(self) -> dict[str, Any] | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         desc = cast(RatioBinarySensorEntityDescription, self.entity_description)
         attrs_fn = desc.attrs_fn
-        if attrs_fn is None or self.coordinator.data is None:
+        if attrs_fn is None:
             return None
-        ov = self.coordinator.data.chargers.get(self._serial)
+        ov = self._overview
         if ov is None:
             return None
         try:

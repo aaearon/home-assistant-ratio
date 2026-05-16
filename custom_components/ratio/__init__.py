@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import pathlib
 from dataclasses import dataclass, field
-from typing import Any
 
 from aioratio import JsonFileTokenStore, RatioClient
 from aioratio.exceptions import RatioAuthError
@@ -37,12 +38,6 @@ class RatioRuntimeData:
 type RatioConfigEntry = ConfigEntry[RatioRuntimeData]
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-
-
-async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
-    """Set up the Ratio integration (YAML — not supported, services only)."""
-    await async_setup_services(hass)
-    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> bool:
@@ -146,6 +141,19 @@ async def async_unload_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> bo
         if len(hass.config_entries.async_loaded_entries(DOMAIN)) <= 1:
             await async_unload_services(hass)
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> None:
+    """Delete the per-entry token store when the integration is removed."""
+    token_path = pathlib.Path(
+        hass.config.path(f".storage/ratio_{entry.entry_id}.tokens")
+    )
+
+    def _unlink() -> None:
+        with contextlib.suppress(FileNotFoundError):
+            token_path.unlink()
+
+    await hass.async_add_executor_job(_unlink)
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

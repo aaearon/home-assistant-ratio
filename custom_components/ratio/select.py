@@ -94,7 +94,11 @@ class _RatioSelectBase(CoordinatorEntity[RatioCoordinator], SelectEntity):
 
     @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return super().available
+        if not super().available:
+            return False
+        if self.coordinator.data is None:
+            return False
+        return self._serial in self.coordinator.data.chargers
 
 
 class RatioChargeModeSelect(_RatioSelectBase):

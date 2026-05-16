@@ -14,11 +14,10 @@ from __future__ import annotations
 # the same dynamic-property pattern. The variance error is structurally
 # unavoidable from this side of the HA boundary.
 import dataclasses
-import logging
 from typing import Any
 
 from aioratio import RatioClient
-from aioratio.models import InstallerOcppSettings
+from aioratio.models import ChargerOverview, InstallerOcppSettings
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -32,8 +31,6 @@ from .const import DOMAIN
 from .coordinator import RatioCoordinator
 
 PARALLEL_UPDATES = 1
-
-_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -91,14 +88,18 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
         )
 
     @property
+    def _overview(self) -> ChargerOverview | None:
+        if self.coordinator.data is None:
+            return None
+        return self.coordinator.data.chargers.get(self._serial)
+
+    @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return super().available
+        return super().available and self._overview is not None
 
     @property
     def is_on(self) -> bool | None:  # pyright: ignore[reportIncompatibleVariableOverride]
-        if self.coordinator.data is None:
-            return None
-        ov = self.coordinator.data.chargers.get(self._serial)
+        ov = self._overview
         if ov is None or ov.charger_status is None:
             return None
         ind = ov.charger_status.indicators
@@ -143,9 +144,7 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
         await self.coordinator.request_command(self._client.stop_charge, self._serial)
 
     def _charger_status(self) -> Any:
-        if self.coordinator.data is None:
-            return None
-        ov = self.coordinator.data.chargers.get(self._serial)
+        ov = self._overview
         return ov.charger_status if ov is not None else None
 
 

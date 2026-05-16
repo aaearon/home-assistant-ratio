@@ -841,3 +841,66 @@ async def test_import_session_history_connection_error(
             blocking=True,
             return_response=True,
         )
+
+
+# ---------------------------------------------------------------------------
+# Schema acceptance: device_id forms
+# ---------------------------------------------------------------------------
+
+
+def test_start_charge_schema_accepts_string_and_list() -> None:
+    """START_CHARGE_SCHEMA should accept both single-string and list device_id."""
+    from custom_components.ratio.services import START_CHARGE_SCHEMA
+
+    # Single string is accepted.
+    START_CHARGE_SCHEMA({"device_id": "dev1"})
+    # Single-item list is accepted.
+    START_CHARGE_SCHEMA({"device_id": ["dev1"]})
+    # Multi-item list is accepted at the schema level (handler decides).
+    START_CHARGE_SCHEMA({"device_id": ["dev1", "dev2"]})
+
+
+def test_reconfigure_wifi_schema_accepts_string_and_list() -> None:
+    """RECONFIGURE_WIFI_SCHEMA should accept the same shapes as the others."""
+    from custom_components.ratio.services import RECONFIGURE_WIFI_SCHEMA
+
+    RECONFIGURE_WIFI_SCHEMA({"device_id": "dev1", "ssid": "net"})
+    RECONFIGURE_WIFI_SCHEMA({"device_id": ["dev1"], "ssid": "net"})
+    RECONFIGURE_WIFI_SCHEMA({"device_id": ["dev1", "dev2"], "ssid": "net"})
+
+
+def test_ble_probe_schema_accepts_string_and_list() -> None:
+    from custom_components.ratio.services import BLE_PROBE_SCHEMA
+
+    BLE_PROBE_SCHEMA({"device_id": "dev1"})
+    BLE_PROBE_SCHEMA({"device_id": ["dev1"]})
+    BLE_PROBE_SCHEMA({"device_id": ["dev1", "dev2"]})
+
+
+# ---------------------------------------------------------------------------
+# Single-device handler enforcement
+# ---------------------------------------------------------------------------
+
+
+def test_require_single_device_passes_single_pair() -> None:
+    from custom_components.ratio.services import _require_single_device
+
+    pair = _require_single_device([("entry", "SN001")], "ratio.reconfigure_wifi")
+    assert pair == ("entry", "SN001")
+
+
+def test_require_single_device_rejects_multiple_pairs() -> None:
+    from custom_components.ratio.services import _require_single_device
+
+    with pytest.raises(ServiceValidationError):
+        _require_single_device(
+            [("entry", "SN001"), ("entry", "SN002")], "ratio.reconfigure_wifi"
+        )
+
+
+def test_require_single_device_rejects_empty_list() -> None:
+    """An empty device_id list must raise rather than IndexError on pairs[0]."""
+    from custom_components.ratio.services import _require_single_device
+
+    with pytest.raises(ServiceValidationError):
+        _require_single_device([], "ratio.reconfigure_wifi")

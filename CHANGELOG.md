@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- BLE diagnostics no longer leak charger serial numbers as top-level dict
+  keys; the section now mirrors the cloud-data redaction pattern (list of
+  dicts with a redacted `serial_number` field).
+- Added missing `connectivity_serial_number` translation so the
+  Connectivity-serial-number diagnostic sensor renders with a human name.
+- Token file at `.storage/ratio_<entry_id>.tokens` is now deleted on
+  integration removal via a new `async_remove_entry` handler.
+- Entities for chargers that have been removed from the Ratio cloud account
+  now correctly report `available=False` instead of `available=True` with
+  a `None` state until next teardown.
+
+### Changed
+
+- `reconfigure_wifi` and `ble_probe` service schemas now accept either a
+  single `device_id` string or a list, matching the other Ratio services.
+  The handlers raise a clear ``single_device_required`` validation error
+  when given a list with more than one device, rather than silently
+  acting on only the first entry.
+
+### Fixed (post-review)
+
+- `last_session_*` sensors no longer report `unavailable` for a healthy
+  charger that has not yet completed a session; availability is now gated
+  on the main coordinator's view of the charger, not on the presence of a
+  session in the history coordinator.
+
+### Internal
+
+- Removed dead `_pi` helper from `sensor.py`; dropped unused `_LOGGER`
+  imports in `number.py` and `switch.py`.
+- `async_setup` removed — the integration is config-flow only and services
+  are registered from `async_setup_entry`.
+- `pyrightconfig.json` no longer includes `tests/` (test mocks use loose
+  typing; a follow-up will type the fixtures separately).
+- `quality_scale.yaml` corrected: `discovery` is `done` (BLE), not exempt;
+  `discovery-update-info` remains exempt with an updated rationale.
+
 ## [0.11.2] — 2026-05-16
 
 ### Fixed

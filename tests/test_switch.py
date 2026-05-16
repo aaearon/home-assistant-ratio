@@ -263,12 +263,12 @@ async def test_switch_turn_off_noop_when_already_off(
 
 
 @pytest.mark.asyncio
-async def test_switch_is_on_none_when_no_data(
+async def test_switch_unavailable_when_no_data(
     hass: HomeAssistant,
     setup_integration,
     mock_ratio_client: MagicMock,
 ) -> None:
-    """Switch is_on should return None when coordinator has no data."""
+    """Switch should be unavailable when coordinator has no data."""
     entry = setup_integration
     coordinator = entry.runtime_data.coordinator
 
@@ -282,18 +282,17 @@ async def test_switch_is_on_none_when_no_data(
     await hass.async_block_till_done()
 
     state = hass.states.get(_entity_id())
-    # When is_on returns None, HA renders the state as "unknown"
     assert state is not None
-    assert state.state == "unknown"
+    assert state.state == "unavailable"
 
 
 @pytest.mark.asyncio
-async def test_switch_is_on_none_when_charger_missing(
+async def test_switch_unavailable_when_charger_missing(
     hass: HomeAssistant,
     setup_integration,
     mock_ratio_client: MagicMock,
 ) -> None:
-    """Switch is_on should return None when charger disappears from data."""
+    """Switch should be unavailable when charger disappears from data."""
     entry = setup_integration
     coordinator = entry.runtime_data.coordinator
 
@@ -307,4 +306,4 @@ async def test_switch_is_on_none_when_charger_missing(
 
     state = hass.states.get(_entity_id())
     assert state is not None
-    assert state.state == "unknown"
+    assert state.state == "unavailable"

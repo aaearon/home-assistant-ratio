@@ -225,12 +225,12 @@ async def test_charging_disabled_no_reason_no_extra_attrs(
 
 
 @pytest.mark.asyncio
-async def test_binary_sensor_unknown_when_no_data(
+async def test_binary_sensor_unavailable_when_no_data(
     hass: HomeAssistant,
     setup_integration,
     mock_ratio_client: MagicMock,
 ) -> None:
-    """Binary sensors should be 'unknown' when coordinator data is None."""
+    """Binary sensors should be 'unavailable' when coordinator data is None."""
     entry = setup_integration
     coordinator = entry.runtime_data.coordinator
 
@@ -245,16 +245,16 @@ async def test_binary_sensor_unknown_when_no_data(
 
     state = hass.states.get(_entity_id("vehicle_connected"))
     assert state is not None
-    assert state.state == "unknown"
+    assert state.state == "unavailable"
 
 
 @pytest.mark.asyncio
-async def test_binary_sensor_unknown_when_charger_missing(
+async def test_binary_sensor_unavailable_when_charger_missing(
     hass: HomeAssistant,
     setup_integration,
     mock_ratio_client: MagicMock,
 ) -> None:
-    """Binary sensors should be 'unknown' when charger is removed from data."""
+    """Binary sensors should be 'unavailable' when charger is removed from data."""
     entry = setup_integration
     coordinator = entry.runtime_data.coordinator
 
@@ -268,7 +268,7 @@ async def test_binary_sensor_unknown_when_charger_missing(
 
     state = hass.states.get(_entity_id("vehicle_connected"))
     assert state is not None
-    assert state.state == "unknown"
+    assert state.state == "unavailable"
 
 
 @pytest.mark.asyncio

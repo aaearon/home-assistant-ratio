@@ -2,7 +2,7 @@
   "venvPath": ".",
   "venv": ".venv",
   "pythonVersion": "3.12",
-  "include": ["custom_components", "tests"],
+  "include": ["custom_components"],
   "exclude": [
     "**/__pycache__",
     ".venv",
