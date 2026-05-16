@@ -368,9 +368,7 @@ class RatioOptionsFlow(OptionsFlow):
                 vol.Required(_FIELD_ENABLED, default=True): bool,
                 vol.Required(_FIELD_POLL_PERIOD, default=existing): vol.All(
                     vol.Coerce(float),
-                    vol.Range(
-                        min=BLE_POLL_PERIOD_MIN_S, max=BLE_POLL_PERIOD_MAX_S
-                    ),
+                    vol.Range(min=BLE_POLL_PERIOD_MIN_S, max=BLE_POLL_PERIOD_MAX_S),
                 ),
             }
         )
