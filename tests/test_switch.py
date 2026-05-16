@@ -57,7 +57,72 @@ async def test_switch_is_on_when_charging(
     entry = setup_integration
     coordinator = entry.runtime_data.coordinator
 
-    ov = _make_overview(session_active=True, stop_allowed=True)
+    ov = _make_overview(
+        session_active=True, stop_allowed=True, charging_state="Charging"
+    )
+    coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
+    await hass.async_block_till_done()
+
+    state = hass.states.get(_entity_id())
+    assert state is not None
+    assert state.state == "on"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "charging_state",
+    ["VehicleDetected", "Standby", "Disabled", "Offline", "NoPower", "Error"],
+)
+async def test_switch_is_off_when_session_active_but_not_charging(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+    charging_state: str,
+) -> None:
+    """Switch reports 'off' whenever current is not flowing, even if a
+    session record is still open on the cloud side.
+
+    Regression test for #37: after the user stopped charging mid-session
+    the charger transitioned Charging -> VehicleDetected while the cloud
+    kept reporting ``isChargeSessionActive=true``. The switch used to
+    bounce back to 'on' on the next poll, then refused to be turned off
+    because ``isChargeStopAllowed=false`` in VehicleDetected.
+    """
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    ov = _make_overview(
+        session_active=True,
+        start_allowed=True,
+        stop_allowed=False,
+        charging_state=charging_state,
+    )
+    coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
+    await hass.async_block_till_done()
+
+    state = hass.states.get(_entity_id())
+    assert state is not None
+    assert state.state == "off"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "charging_state", ["Charging", "ChargingWithVentilation", "PausedByEVSE"]
+)
+async def test_switch_is_on_for_all_charging_states(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+    charging_state: str,
+) -> None:
+    """Switch reports 'on' for any charging-flavoured state, matching the
+    Android app's power-display logic."""
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    ov = _make_overview(
+        session_active=True, stop_allowed=True, charging_state=charging_state
+    )
     coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
     await hass.async_block_till_done()
 
@@ -174,7 +239,9 @@ async def test_switch_turn_on_noop_when_already_on(
     coordinator = entry.runtime_data.coordinator
     client = mock_ratio_client.return_value
 
-    ov = _make_overview(session_active=True, stop_allowed=True)
+    ov = _make_overview(
+        session_active=True, stop_allowed=True, charging_state="Charging"
+    )
     coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
     await hass.async_block_till_done()
 
@@ -198,7 +265,9 @@ async def test_switch_turn_off_calls_stop_charge(
     coordinator = entry.runtime_data.coordinator
     client = mock_ratio_client.return_value
 
-    ov = _make_overview(session_active=True, stop_allowed=True)
+    ov = _make_overview(
+        session_active=True, stop_allowed=True, charging_state="Charging"
+    )
     coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
     await hass.async_block_till_done()
 
@@ -224,7 +293,7 @@ async def test_switch_turn_off_not_allowed_raises(
     ov = _make_overview(
         session_active=True,
         stop_allowed=False,
-        charging_state="charging",
+        charging_state="Charging",
     )
     coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
     await hass.async_block_till_done()

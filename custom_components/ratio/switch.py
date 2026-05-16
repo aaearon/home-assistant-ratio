@@ -97,6 +97,14 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
         return super().available and self._overview is not None
 
+    # Charging states that imply current is (or could be momentarily) flowing.
+    # ``is_charge_session_active`` is *not* a substitute: a session record
+    # stays open across the post-stop VehicleDetected phase, which would
+    # otherwise pin the switch back to ON after each poll (#37).
+    _ACTIVE_CHARGING_STATES = frozenset(
+        {"Charging", "ChargingWithVentilation", "PausedByEVSE"}
+    )
+
     @property
     def is_on(self) -> bool | None:  # pyright: ignore[reportIncompatibleVariableOverride]
         ov = self._overview
@@ -105,7 +113,7 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
         ind = ov.charger_status.indicators
         if ind is None:
             return None
-        return bool(ind.is_charge_session_active)
+        return ind.charging_state in self._ACTIVE_CHARGING_STATES
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start a charge session."""
