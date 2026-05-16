@@ -4,24 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.11.2] — 2026-05-16
+
 ### Fixed
 
 - **BLE session loop no longer parks indefinitely after a transport
-  disconnect.** `RatioBleCoordinator._session_loop` was gating retries on
-  `_wake_event`, which is set only by the `RATIO_<serial>` local-name advert
-  callback (or by one-shot priming at `async_start`). When the callback was
-  not re-fired after a transport drop, the loop blocked forever on
-  `_wake_event.wait()` even though `async_discovered_service_info` still
-  exposed a usable advert — voltage/current entities went `unavailable`
-  until the integration was reloaded. The loop now (a) reprimes the wake
-  event from the validated discovery cache at the top of each iteration so a
-  cached advert is enough to re-attempt without a fresh callback, and (b)
-  waits on `_wake_event` with a `_WAKE_WAIT_TIMEOUT_S = 60 s` `wait_for`
-  backstop so even a pathological callback-suppression scenario can't park
-  the loop — when the cache is empty, `_pick_best_device` still returns
-  `None` and the loop continues without churn. Startup priming now uses the
-  same validated `parse_advertisement` predicate as `_pick_best_device` so a
-  name-only spoof cannot prime the loop into picking nothing.
+  disconnect** ([#36](https://github.com/aaearon/home-assistant-ratio/pull/36)).
+  `RatioBleCoordinator._session_loop` was gating retries on `_wake_event`,
+  which is set only by the `RATIO_<serial>` local-name advert callback (or
+  by one-shot priming at `async_start`). When the callback was not re-fired
+  after a transport drop, the loop blocked forever on `_wake_event.wait()`
+  even though `async_discovered_service_info` still exposed a usable advert
+  — voltage/current entities went `unavailable` until the integration was
+  reloaded. The loop now (a) reprimes the wake event from the validated
+  discovery cache at the top of each iteration so a cached advert is enough
+  to re-attempt without a fresh callback, and (b) waits on `_wake_event`
+  with a `_WAKE_WAIT_TIMEOUT_S = 60 s` `wait_for` backstop so even a
+  pathological callback-suppression scenario can't park the loop — when the
+  cache is empty, `_pick_best_device` still returns `None` and the loop
+  continues without churn. Startup priming now uses the same validated
+  `parse_advertisement` predicate as `_pick_best_device` so a name-only
+  spoof cannot prime the loop into picking nothing.
 
 ## [0.11.1] — 2026-05-15
 
