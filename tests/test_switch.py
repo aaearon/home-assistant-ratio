@@ -20,7 +20,8 @@ def _make_overview(
     session_active: bool = False,
     start_allowed: bool = True,
     stop_allowed: bool = False,
-    charging_state: str = "idle",
+    charging_state: str | None = "idle",
+    charging_disabled: bool = False,
 ) -> ChargerOverview:
     return ChargerOverview.from_dict(
         {
@@ -31,7 +32,7 @@ def _make_overview(
                     "isVehicleConnected": True,
                     "isChargingPaused": False,
                     "errors": [],
-                    "isChargingDisabled": False,
+                    "isChargingDisabled": charging_disabled,
                     "isChargingAuthorized": True,
                     "isPowerReducedByDso": False,
                     "chargingState": charging_state,
@@ -356,6 +357,55 @@ async def test_switch_unavailable_when_no_data(
     state = hass.states.get(_entity_id())
     assert state is not None
     assert state.state == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_switch_unknown_when_charging_state_missing(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """``chargingState=null`` (transient empty cloud payload) reports
+    ``unknown`` rather than ``off``. Codex review feedback on #39: returning
+    a confident ``off`` from missing data would lie to the user."""
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    ov = _make_overview(session_active=False, charging_state=None)
+    coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
+    await hass.async_block_till_done()
+
+    state = hass.states.get(_entity_id())
+    assert state is not None
+    assert state.state == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_switch_off_when_charging_disabled_overrides_active_state(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """``isChargingDisabled=true`` forces ``off`` even if the cloud reports
+    ``chargingState=Charging``. Mirrors the Android domain model's
+    Disabled-before-raw-state derivation in ``ChargerStatusModel.java:385``
+    — the cloud occasionally emits a stale active state during an
+    administratively-disabled window."""
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    ov = _make_overview(
+        session_active=True,
+        charging_state="Charging",
+        charging_disabled=True,
+        stop_allowed=False,
+    )
+    coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
+    await hass.async_block_till_done()
+
+    state = hass.states.get(_entity_id())
+    assert state is not None
+    assert state.state == "off"
 
 
 @pytest.mark.asyncio
