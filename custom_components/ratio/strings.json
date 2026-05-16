@@ -194,6 +194,9 @@
     "multiple_accounts": {
       "message": "Multiple Ratio accounts are configured; this service does not yet support targeting a specific account."
     },
+    "single_device_required": {
+      "message": "{service} accepts only one device per call; {count} were provided."
+    },
     "rate_limited": {
       "message": "{command}: rate limited: {error}"
     },

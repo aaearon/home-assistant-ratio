@@ -635,7 +635,14 @@ class RatioLastSessionSensor(CoordinatorEntity[RatioHistoryCoordinator], SensorE
 
     @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return super().available and _last_session(self.coordinator, self._serial) is not None
+        # Gate on the *main* coordinator's view of the charger, not on the
+        # history coordinator's data: a freshly-added charger with no
+        # completed sessions yet is a perfectly valid entity that should
+        # render its state as ``unknown``, not ``unavailable``.
+        if not super().available:
+            return False
+        main = self.coordinator._main_coordinator
+        return main.data is not None and self._serial in main.data.chargers
 
     @property
     def native_value(self) -> Any:  # pyright: ignore[reportIncompatibleVariableOverride]

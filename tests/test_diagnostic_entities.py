@@ -290,3 +290,28 @@ def test_ocpp_sensor_unavailable_when_settings_missing() -> None:
         ocpp_settings={},
     )
     assert _ocpp_sensor(coord, "charge_point_identifier").available is False
+
+
+def test_ratio_sensor_unavailable_when_charger_missing() -> None:
+    """RatioSensor must report unavailable when its serial drops from the cloud."""
+    from custom_components.ratio.sensor import SENSOR_DESCRIPTIONS, RatioSensor
+
+    coord = MagicMock()
+    coord.last_update_success = True
+    coord.data = RatioData(chargers={})
+
+    desc = SENSOR_DESCRIPTIONS[0]
+    sensor = RatioSensor(coord, SERIAL, desc)
+    assert sensor.available is False
+
+
+def test_ratio_select_base_unavailable_when_charger_missing() -> None:
+    """_RatioSelectBase.available must reject when serial is no longer in chargers."""
+    from custom_components.ratio.select import RatioChargeModeSelect
+
+    coord = MagicMock()
+    coord.last_update_success = True
+    coord.data = RatioData(chargers={})
+
+    sel = RatioChargeModeSelect(coord, MagicMock(), SERIAL)
+    assert sel.available is False

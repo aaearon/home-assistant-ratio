@@ -21,6 +21,16 @@ All notable changes to this project will be documented in this file.
 
 - `reconfigure_wifi` and `ble_probe` service schemas now accept either a
   single `device_id` string or a list, matching the other Ratio services.
+  The handlers raise a clear ``single_device_required`` validation error
+  when given a list with more than one device, rather than silently
+  acting on only the first entry.
+
+### Fixed (post-review)
+
+- `last_session_*` sensors no longer report `unavailable` for a healthy
+  charger that has not yet completed a session; availability is now gated
+  on the main coordinator's view of the charger, not on the presence of a
+  session in the history coordinator.
 
 ### Internal
 
