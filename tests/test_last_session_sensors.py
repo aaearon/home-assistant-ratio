@@ -44,9 +44,7 @@ def _make_history_coordinator(
     main = MagicMock()
     chargers = main_chargers if main_chargers is not None else list(sessions_by_serial)
     main.data = RatioData(
-        chargers={
-            s: ChargerOverview.from_dict({"serialNumber": s}) for s in chargers
-        }
+        chargers={s: ChargerOverview.from_dict({"serialNumber": s}) for s in chargers}
     )
     coord._main_coordinator = main
     return coord

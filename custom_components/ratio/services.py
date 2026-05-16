@@ -178,7 +178,9 @@ RECONFIGURE_WIFI_SCHEMA = vol.Schema(
     }
 )
 
-BLE_PROBE_SCHEMA = vol.Schema({vol.Required("device_id"): vol.Any(cv.string, [cv.string])})
+BLE_PROBE_SCHEMA = vol.Schema(
+    {vol.Required("device_id"): vol.Any(cv.string, [cv.string])}
+)
 
 
 def _resolve_serials(hass: HomeAssistant, call: ServiceCall) -> list[tuple[str, str]]:
@@ -399,13 +401,14 @@ async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
 def _require_single_device(
     pairs: list[tuple[str, str]], service: str
 ) -> tuple[str, str]:
-    """Reject calls passing > 1 device to an inherently single-device service.
+    """Reject calls passing != 1 device to an inherently single-device service.
 
     The schema permits a list form for consistency with the other services
     (and the HA target selector), but the BLE-side handlers can only address
-    one charger per call.
+    one charger per call. An empty list — which the schema permits — would
+    otherwise IndexError on ``pairs[0]``; surface a clear validation error.
     """
-    if len(pairs) > 1:
+    if len(pairs) != 1:
         raise ServiceValidationError(
             translation_domain=DOMAIN,
             translation_key="single_device_required",

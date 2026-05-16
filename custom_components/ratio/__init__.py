@@ -143,9 +143,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> bo
     return unload_ok
 
 
-async def async_remove_entry(
-    hass: HomeAssistant, entry: RatioConfigEntry
-) -> None:
+async def async_remove_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> None:
     """Delete the per-entry token store when the integration is removed."""
     token_path = pathlib.Path(
         hass.config.path(f".storage/ratio_{entry.entry_id}.tokens")

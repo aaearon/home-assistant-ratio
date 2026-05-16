@@ -896,3 +896,11 @@ def test_require_single_device_rejects_multiple_pairs() -> None:
         _require_single_device(
             [("entry", "SN001"), ("entry", "SN002")], "ratio.reconfigure_wifi"
         )
+
+
+def test_require_single_device_rejects_empty_list() -> None:
+    """An empty device_id list must raise rather than IndexError on pairs[0]."""
+    from custom_components.ratio.services import _require_single_device
+
+    with pytest.raises(ServiceValidationError):
+        _require_single_device([], "ratio.reconfigure_wifi")
