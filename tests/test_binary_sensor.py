@@ -54,10 +54,12 @@ def _make_overview(
     return ChargerOverview.from_dict(d)
 
 
-# Mapping from logical key to HA entity_id suffix (derived from entity name).
+# Mapping from logical key to HA entity_id suffix (derived from entity name
+# for fresh installs in tests — the entity registry is empty per test).
 _KEY_TO_SUFFIX = {
     "vehicle_connected": "vehicle_connected",
-    "charge_session_active": "charging",
+    "charging": "charging",
+    "charge_session_active": "session_active",
     "charging_paused": "charging_paused",
     "error": "error",
     "charging_disabled": "charging_disabled",
@@ -90,7 +92,8 @@ async def test_binary_sensors_created(
     # Entity IDs are derived from device name + entity name, not key.
     expected_suffixes = [
         "vehicle_connected",
-        "charging",  # charge_session_active -> name "Charging"
+        "charging",  # NEW: chargingState-membership truth, key="charging"
+        "session_active",  # RENAMED: was "charging", now "Session active"
         "charging_paused",
         "error",
         "charging_disabled",
@@ -269,6 +272,87 @@ async def test_binary_sensor_unavailable_when_charger_missing(
     state = hass.states.get(_entity_id("vehicle_connected"))
     assert state is not None
     assert state.state == "unavailable"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "charging_state",
+    ["Charging", "ChargingWithVentilation", "PausedByEVSE"],
+)
+async def test_charging_sensor_on_for_flowing_current_states(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+    charging_state: str,
+) -> None:
+    """The new `charging` binary sensor reports `on` iff current is (or
+    could momentarily be) flowing — matches the Android app's power-display
+    semantics."""
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    ov = _make_overview(session_active=True, charging_state=charging_state)
+    coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
+    await hass.async_block_till_done()
+
+    state = hass.states.get(_entity_id("charging"))
+    assert state is not None
+    assert state.state == "on"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "charging_state",
+    ["VehicleDetected", "Standby", "Disabled", "Offline", "NoPower", "Error"],
+)
+async def test_charging_sensor_off_when_session_active_but_not_charging(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+    charging_state: str,
+) -> None:
+    """Regression test for #40: `binary_sensor.ratio_<serial>_charging`
+    must report `off` whenever current is not flowing, even if the cloud
+    keeps a session record open (e.g. the VehicleDetected window after a
+    user-initiated stop while the cable is still plugged in)."""
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    ov = _make_overview(session_active=True, charging_state=charging_state)
+    coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
+    await hass.async_block_till_done()
+
+    state = hass.states.get(_entity_id("charging"))
+    assert state is not None
+    assert state.state == "off"
+
+
+@pytest.mark.asyncio
+async def test_session_active_sensor_tracks_raw_flag(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """The renamed `session_active` binary sensor preserves the raw
+    `isChargeSessionActive` semantics for debugging / advanced users; only
+    its user-facing name changed (was "Charging", now "Session active")."""
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    ov = _make_overview(session_active=True, charging_state="VehicleDetected")
+    coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
+    await hass.async_block_till_done()
+
+    state = hass.states.get(_entity_id("charge_session_active"))
+    assert state is not None
+    assert state.state == "on"
+
+    ov_off = _make_overview(session_active=False, charging_state="Standby")
+    coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov_off}))
+    await hass.async_block_till_done()
+    state = hass.states.get(_entity_id("charge_session_active"))
+    assert state is not None
+    assert state.state == "off"
 
 
 @pytest.mark.asyncio

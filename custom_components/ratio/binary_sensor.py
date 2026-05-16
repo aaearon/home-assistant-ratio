@@ -53,6 +53,23 @@ def _ind(ov: ChargerOverview) -> Any:
     )
 
 
+# Charging states that imply current is (or could momentarily be) flowing.
+# Mirrors ``RatioChargingSwitch._ACTIVE_CHARGING_STATES`` (see switch.py /
+# PR #39); kept in sync intentionally. A future refactor can hoist this to
+# a shared module once both PRs land — held inline for now to keep the
+# diff narrow.
+_ACTIVE_CHARGING_STATES = frozenset(
+    {"Charging", "ChargingWithVentilation", "PausedByEVSE"}
+)
+
+
+def _is_actively_charging(ov: ChargerOverview) -> bool | None:
+    ind = _ind(ov)
+    if ind is None:
+        return None
+    return ind.charging_state in _ACTIVE_CHARGING_STATES
+
+
 BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, ...] = (
     RatioBinarySensorEntityDescription(
         key="vehicle_connected",
@@ -61,10 +78,27 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, ...] = (
         device_class=BinarySensorDeviceClass.PLUG,
         value_fn=lambda ov: _ind(ov).is_vehicle_connected if _ind(ov) else None,
     ),
+    # NEW (#40): reports whether current is actually flowing, mirroring the
+    # Android app's power-display logic. Distinct from ``charge_session_active``
+    # below, which exposes the raw cloud flag and stays ``on`` through the
+    # post-stop VehicleDetected window.
+    RatioBinarySensorEntityDescription(
+        key="charging",
+        translation_key="charging",
+        name="Charging",
+        device_class=BinarySensorDeviceClass.RUNNING,
+        value_fn=_is_actively_charging,
+    ),
+    # RENAMED (#40): was user-facing "Charging" — that name now belongs to
+    # the new ``charging`` entity above. Value (``isChargeSessionActive``) is
+    # unchanged, so existing automations referencing the entity continue to
+    # see the same flag they always did. Existing installs keep their
+    # registry-stored entity_id (``..._charging``); fresh installs get
+    # ``..._session_active`` from the new name slug.
     RatioBinarySensorEntityDescription(
         key="charge_session_active",
         translation_key="charge_session_active",
-        name="Charging",
+        name="Session active",
         device_class=BinarySensorDeviceClass.RUNNING,
         value_fn=lambda ov: _ind(ov).is_charge_session_active if _ind(ov) else None,
     ),

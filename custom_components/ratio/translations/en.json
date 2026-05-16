@@ -109,7 +109,8 @@
     },
     "binary_sensor": {
       "vehicle_connected": { "name": "Vehicle connected" },
-      "charge_session_active": { "name": "Charging" },
+      "charging": { "name": "Charging" },
+      "charge_session_active": { "name": "Session active" },
       "charging_paused": { "name": "Charging paused" },
       "error": { "name": "Error" },
       "charging_disabled": {
