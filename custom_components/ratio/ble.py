@@ -66,6 +66,11 @@ _BACKOFF_MAX_S = 60.0
 _BACKOFF_BOND_S = 30.0
 _POLL_PERIOD_S = 3.0
 _SESSION_TASK_CANCEL_TIMEOUT_S = 2.0
+# Bounded wait on ``_wake_event`` so a missed advert callback after a transport
+# drop can't park the loop indefinitely — the timeout lets the loop fall through
+# to a fresh cache check (gated by ``_pick_best_device`` returning ``None`` when
+# the cache is empty, so churn while genuinely offline stays bounded).
+_WAKE_WAIT_TIMEOUT_S = 60.0
 
 
 async def _wait_future(fut: asyncio.Future[None]) -> None:
@@ -193,11 +198,10 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
 
         # If any matching advert is already cached, prime the wake event so
         # the session loop doesn't sit waiting for the *next* advert when one
-        # is already known.
-        if any(
-            info.name == f"RATIO_{self.serial}"
-            for info in async_discovered_service_info(self.hass, connectable=True)
-        ):
+        # is already known. Uses the same validated predicate as
+        # ``_pick_best_device`` so a name-only spoof can't prime us into
+        # picking nothing.
+        if self._valid_candidates():
             self._wake_event.set()
 
         self._session_task = self.hass.async_create_background_task(
@@ -267,6 +271,23 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         """
         return self._session_task is None or self._session_task.done()
 
+    def _valid_candidates(self) -> list[BluetoothServiceInfoBleak]:
+        """All cached connectable adverts that pass the Ratio identity check.
+
+        Shared by startup priming, the session loop's cache reprime, and
+        ``_pick_best_device`` so every site uses the same predicate: matching
+        ``RATIO_<serial>`` local name AND a payload under Ratio's CIC
+        (``0x0BFF``) that ``parse_advertisement`` accepts. Spoofs and stale
+        non-Ratio entries are filtered uniformly.
+        """
+        local_name = f"RATIO_{self.serial}"
+        return [
+            info
+            for info in async_discovered_service_info(self.hass, connectable=True)
+            if info.name == local_name
+            and parse_advertisement(info.name, info.manufacturer_data) is not None
+        ]
+
     def _pick_best_device(self) -> BLEDevice | None:
         """Return the BLEDevice from whichever scanner has the strongest
         current advertisement for ``RATIO_<serial>``.
@@ -293,13 +314,7 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         address to ``self._active_address`` for ``_scanner_info`` /
         diagnostics consumers.
         """
-        local_name = f"RATIO_{self.serial}"
-        candidates = [
-            info
-            for info in async_discovered_service_info(self.hass, connectable=True)
-            if info.name == local_name
-            and parse_advertisement(info.name, info.manufacturer_data) is not None
-        ]
+        candidates = self._valid_candidates()
         if not candidates:
             return None
         best = max(candidates, key=lambda i: i.rssi or -127)
@@ -361,8 +376,27 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         backoff = _BACKOFF_INITIAL_S
         try:
             while True:
-                # Wait for at least one advert before attempting a connect.
-                await self._wake_event.wait()
+                # Reprime from the discovery cache before blocking. The
+                # local-name advert callback may not fire after a transport
+                # drop (proxy quirks, callback already debounced, etc.); if a
+                # valid advert is already cached, set the wake event so the
+                # loop proceeds without waiting for a fresh callback.
+                if self._valid_candidates():
+                    self._wake_event.set()
+                # Bounded wait as a backstop: if neither the callback nor the
+                # cache wakes us, fall through after the timeout so the next
+                # iteration re-checks the cache. ``_pick_best_device``
+                # returning ``None`` when the cache is empty keeps churn
+                # bounded while the charger is genuinely offline.
+                if not self._wake_event.is_set():
+                    _LOGGER.debug(
+                        "BLE session for %s waiting for advert (cache empty)",
+                        self.serial,
+                    )
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        self._wake_event.wait(), timeout=_WAKE_WAIT_TIMEOUT_S
+                    )
                 self._wake_event.clear()
 
                 device = self._pick_best_device()

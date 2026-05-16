@@ -231,6 +231,10 @@ async def test_session_loop_fires_bond_issue(hass: HomeAssistant) -> None:
             "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=MagicMock(),
         ),
+        patch(
+            "custom_components.ratio.ble.async_discovered_service_info",
+            return_value=[],
+        ),
         patch("custom_components.ratio.ble.BleClient", return_value=bond_client),
         patch(
             "custom_components.ratio.ble.async_create_issue",
@@ -294,6 +298,10 @@ async def test_session_loop_backoff_on_connection_error(hass: HomeAssistant) -> 
             "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=MagicMock(),
         ),
+        patch(
+            "custom_components.ratio.ble.async_discovered_service_info",
+            return_value=[],
+        ),
         patch("custom_components.ratio.ble.BleClient", return_value=broken_client),
         patch("custom_components.ratio.ble.asyncio.sleep", side_effect=_record_sleep),
     ):
@@ -335,6 +343,10 @@ async def test_session_loop_returns_data_via_run_poll(hass: HomeAssistant) -> No
         patch(
             "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=MagicMock(),
+        ),
+        patch(
+            "custom_components.ratio.ble.async_discovered_service_info",
+            return_value=[],
         ),
         patch("custom_components.ratio.ble.BleClient", return_value=client),
     ):
@@ -824,6 +836,10 @@ async def test_session_loop_sets_active_address(hass: HomeAssistant) -> None:
             "custom_components.ratio.ble.RatioBleCoordinator._pick_best_device",
             return_value=picked_device,
         ),
+        patch(
+            "custom_components.ratio.ble.async_discovered_service_info",
+            return_value=[],
+        ),
         patch("custom_components.ratio.ble.BleClient", return_value=client),
     ):
         task = asyncio.create_task(coord._session_loop())
@@ -856,3 +872,213 @@ async def test_run_wifi_command_raises_when_offline(hass: HomeAssistant) -> None
         pytest.raises(RatioBleConnectionError),
     ):
         await coord.run_wifi_command(AsyncMock())
+
+
+# ---------------------------------------------------------------------------
+# Session-loop self-heal: reprime from cache + bounded wait_for backstop.
+#
+# Reason: after a transport drop the loop catches the BLE error, sleeps the
+# backoff, then loops back to ``await self._wake_event.wait()``. The event was
+# cleared inside the prior iteration and is only re-set by
+# ``_on_local_name_advert`` (the local-name advert callback) or by one-shot
+# priming at startup. If no fresh advert lands after the disconnect, the loop
+# parks forever — observed on a live charger with cached adverts still
+# resolvable via ``async_discovered_service_info``. The two defenses below
+# (cache reprime + bounded ``wait_for``) keep the loop self-healing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_loop_reprimes_from_cache_after_disconnect(
+    hass: HomeAssistant,
+) -> None:
+    """After a transport drop with a cached advert still present, the loop
+    must re-attempt without waiting for a fresh advert callback."""
+    coord = _make_coordinator(hass)
+    _stub_coordinator_for_session(coord)
+    coord._wake_event.set()  # prime first iteration only
+
+    valid_info = _make_service_info()
+
+    constructed_clients: list[MagicMock] = []
+    second_connect = asyncio.Event()
+
+    def _make_client(_device):
+        c = MagicMock()
+        c.connect = AsyncMock()
+        c.disconnect = AsyncMock()
+        c.is_connected = True
+        c.protocol_version = 2
+        loop = asyncio.get_event_loop()
+        c.disconnect_future = loop.create_future()
+
+        async def _poll(period: float = 3.0):
+            yield _make_sensor_response()
+            raise RatioBleConnectionError("transport disconnected")
+
+        c.poll_sensor_values = _poll
+        constructed_clients.append(c)
+        if len(constructed_clients) >= 2:
+            second_connect.set()
+        return c
+
+    real_sleep = asyncio.sleep
+
+    async def _fast_sleep(_delay: float) -> None:
+        await real_sleep(0)
+
+    with (
+        patch(
+            "custom_components.ratio.ble.async_discovered_service_info",
+            return_value=[valid_info],
+        ),
+        patch("custom_components.ratio.ble.BleClient", side_effect=_make_client),
+        patch("custom_components.ratio.ble.asyncio.sleep", side_effect=_fast_sleep),
+    ):
+        task = asyncio.create_task(coord._session_loop())
+        try:
+            await asyncio.wait_for(second_connect.wait(), timeout=1.0)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    # Two BleClient constructions prove the loop self-healed without any
+    # external advert callback firing between iterations.
+    assert len(constructed_clients) >= 2
+
+
+@pytest.mark.asyncio
+async def test_session_loop_wakes_via_timeout_when_cache_empty_then_populated(
+    hass: HomeAssistant,
+) -> None:
+    """When the cache is empty and no callback fires, the bounded wait_for
+    must time out so the next iteration re-checks the cache."""
+    import custom_components.ratio.ble as ble_module
+
+    coord = _make_coordinator(hass)
+    _stub_coordinator_for_session(coord)
+    # _wake_event intentionally NOT set — we want to exercise the timeout path.
+
+    valid_info = _make_service_info()
+    discovery_calls = {"n": 0}
+
+    def _discover(_hass, *, connectable=True):
+        discovery_calls["n"] += 1
+        # First call: empty cache. Subsequent calls: valid candidate present.
+        return [valid_info] if discovery_calls["n"] >= 2 else []
+
+    connect_attempt = asyncio.Event()
+
+    def _make_client(_device):
+        c = MagicMock()
+
+        async def _connect() -> None:
+            connect_attempt.set()
+            await asyncio.Event().wait()  # hang in connected branch
+
+        c.connect = _connect
+        c.disconnect = AsyncMock()
+        c.is_connected = True
+        c.protocol_version = 2
+        c.disconnect_future = asyncio.get_event_loop().create_future()
+        return c
+
+    with (
+        patch.object(ble_module, "_WAKE_WAIT_TIMEOUT_S", 0.01),
+        patch(
+            "custom_components.ratio.ble.async_discovered_service_info",
+            side_effect=_discover,
+        ),
+        patch("custom_components.ratio.ble.BleClient", side_effect=_make_client),
+    ):
+        task = asyncio.create_task(coord._session_loop())
+        try:
+            await asyncio.wait_for(connect_attempt.wait(), timeout=1.0)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    assert connect_attempt.is_set()
+
+
+@pytest.mark.asyncio
+async def test_session_loop_stays_parked_when_charger_truly_absent(
+    hass: HomeAssistant,
+) -> None:
+    """Repeated wake-event timeouts with an empty cache must not construct
+    a BleClient or escape an exception — preserves the existing 'don't churn
+    when offline' intent."""
+    import custom_components.ratio.ble as ble_module
+
+    coord = _make_coordinator(hass)
+    _stub_coordinator_for_session(coord)
+
+    discovery_calls = {"n": 0}
+    enough_iters = asyncio.Event()
+
+    def _discover(_hass, *, connectable=True):
+        discovery_calls["n"] += 1
+        if discovery_calls["n"] >= 3:
+            enough_iters.set()
+        return []
+
+    with (
+        patch.object(ble_module, "_WAKE_WAIT_TIMEOUT_S", 0.01),
+        patch(
+            "custom_components.ratio.ble.async_discovered_service_info",
+            side_effect=_discover,
+        ),
+        patch("custom_components.ratio.ble.BleClient") as ble_client_cls,
+    ):
+        task = asyncio.create_task(coord._session_loop())
+        try:
+            await asyncio.wait_for(enough_iters.wait(), timeout=1.0)
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    ble_client_cls.assert_not_called()
+    assert discovery_calls["n"] >= 3
+
+
+@pytest.mark.asyncio
+async def test_async_start_priming_rejects_name_only_spoof(
+    hass: HomeAssistant,
+) -> None:
+    """An advert whose local name matches but whose manufacturer data fails
+    ``parse_advertisement`` must not prime the wake event at startup —
+    otherwise a spoof could trick the loop into picking nothing."""
+    coord = _make_coordinator(hass)
+    parent_stop = MagicMock()
+    local_unsub = MagicMock()
+    spoof = _make_service_info(manufacturer_data={})
+
+    background_task = MagicMock()
+    background_task.done.return_value = True
+
+    def _swallow_coro(coro, _name):
+        coro.close()
+        return background_task
+
+    with (
+        patch.object(
+            type(coord).__mro__[1],
+            "async_start",
+            lambda self: parent_stop,
+        ),
+        patch(
+            "custom_components.ratio.ble.async_register_callback",
+            return_value=local_unsub,
+        ),
+        patch(
+            "custom_components.ratio.ble.async_discovered_service_info",
+            return_value=[spoof],
+        ),
+        patch.object(hass, "async_create_background_task", side_effect=_swallow_coro),
+    ):
+        coord.async_start()
+
+    assert coord._wake_event.is_set() is False
