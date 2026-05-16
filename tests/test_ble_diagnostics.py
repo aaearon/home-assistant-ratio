@@ -56,8 +56,9 @@ async def test_diagnostics_includes_ble_section(
 
     assert "ble" in result
     ble_section = result["ble"]
-    assert SERIAL in ble_section
-    charger_ble = ble_section[SERIAL]
+    assert isinstance(ble_section, list)
+    assert len(ble_section) == 1
+    charger_ble = ble_section[0]
     assert charger_ble["last_poll_successful"] is True
     assert charger_ble["available"] is True
     # ``active_address`` distinguishes the scanner-currently-in-use from
@@ -66,11 +67,13 @@ async def test_diagnostics_includes_ble_section(
 
 
 @pytest.mark.asyncio
-async def test_diagnostics_address_redacted(
+async def test_diagnostics_ble_section_redacts_serial_and_address(
     hass: HomeAssistant,
     setup_integration: MockConfigEntry,
 ) -> None:
-    """BLE coordinator address + active_address should be redacted."""
+    """BLE coordinator serial, address, active_address should all be redacted."""
+    import json
+
     entry = setup_integration
     active_mac = "79:75:75:A4:A0:45"
     ble_coord = _make_ble_coordinator(address=MAC, active_address=active_mac)
@@ -79,11 +82,19 @@ async def test_diagnostics_address_redacted(
     result = await async_get_config_entry_diagnostics(hass, entry)
 
     ble_section = result["ble"]
-    assert SERIAL in ble_section
-    assert ble_section[SERIAL]["address"] != MAC
-    assert ble_section[SERIAL]["address"] == "**REDACTED**"
-    assert ble_section[SERIAL]["active_address"] != active_mac
-    assert ble_section[SERIAL]["active_address"] == "**REDACTED**"
+    assert isinstance(ble_section, list)
+    assert len(ble_section) == 1
+    entry_dict = ble_section[0]
+    assert entry_dict["serial_number"] == "**REDACTED**"
+    assert entry_dict["address"] == "**REDACTED**"
+    assert entry_dict["active_address"] == "**REDACTED**"
+
+    # Serial must not leak as a dict key or substring anywhere in the
+    # JSON-serializable payload.
+    serialized = json.dumps(result, default=str)
+    assert SERIAL not in serialized
+    assert MAC not in serialized
+    assert active_mac not in serialized
 
 
 @pytest.mark.asyncio
@@ -91,7 +102,7 @@ async def test_diagnostics_no_ble_section_when_disabled(
     hass: HomeAssistant,
     setup_integration: MockConfigEntry,
 ) -> None:
-    """When no BLE coordinators exist, ble key should be present but empty dict."""
+    """When no BLE coordinators exist, ble key should be present but empty list."""
     entry = setup_integration
     # Do NOT inject ble_coordinators — runtime_data is a plain RatioRuntimeData dataclass
     # without that attribute, so getattr returns {}.
@@ -99,7 +110,7 @@ async def test_diagnostics_no_ble_section_when_disabled(
     result = await async_get_config_entry_diagnostics(hass, entry)
 
     assert "ble" in result
-    assert result["ble"] == {}
+    assert result["ble"] == []
 
 
 # ---------------------------------------------------------------------------

@@ -204,3 +204,42 @@ async def test_migrate_entry_refuses_downgrade(hass: HomeAssistant) -> None:
 
     assert await async_migrate_entry(hass, entry) is False
     assert entry.version == 2  # not silently downgraded
+
+
+@pytest.mark.asyncio
+async def test_async_remove_entry_deletes_token_file(
+    hass: HomeAssistant,
+) -> None:
+    """The token file should be removed when the integration is uninstalled."""
+    import pathlib
+
+    from custom_components.ratio import async_remove_entry
+
+    entry = _make_config_entry(hass)
+    token_path = pathlib.Path(
+        hass.config.path(f".storage/ratio_{entry.entry_id}.tokens")
+    )
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text('{"access_token": "x"}')
+    assert token_path.exists()
+
+    await async_remove_entry(hass, entry)
+
+    assert not token_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_async_remove_entry_when_token_missing(hass: HomeAssistant) -> None:
+    """Removal must be a no-op when the token file was never written."""
+    import pathlib
+
+    from custom_components.ratio import async_remove_entry
+
+    entry = _make_config_entry(hass)
+    token_path = pathlib.Path(
+        hass.config.path(f".storage/ratio_{entry.entry_id}.tokens")
+    )
+    assert not token_path.exists()
+
+    # Must not raise.
+    await async_remove_entry(hass, entry)

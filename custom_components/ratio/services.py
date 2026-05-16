@@ -172,13 +172,13 @@ IMPORT_SESSION_HISTORY_SCHEMA = vol.Schema(
 
 RECONFIGURE_WIFI_SCHEMA = vol.Schema(
     {
-        vol.Required("device_id"): cv.string,
+        vol.Required("device_id"): vol.Any(cv.string, [cv.string]),
         vol.Required("ssid"): cv.string,
         vol.Optional("password"): cv.string,
     }
 )
 
-BLE_PROBE_SCHEMA = vol.Schema({vol.Required("device_id"): cv.string})
+BLE_PROBE_SCHEMA = vol.Schema({vol.Required("device_id"): vol.Any(cv.string, [cv.string])})
 
 
 def _resolve_serials(hass: HomeAssistant, call: ServiceCall) -> list[tuple[str, str]]:

@@ -85,6 +85,7 @@
       "last_session_ended_at": { "name": "Last session ended" },
       "last_session_vehicle": { "name": "Last session vehicle" },
       "cpc_serial_number": { "name": "CPC serial number" },
+      "connectivity_serial_number": { "name": "Connectivity serial number" },
       "hardware_type": { "name": "Hardware type" },
       "hardware_version": { "name": "Hardware version" },
       "firmware_version": { "name": "Firmware version" },

@@ -253,3 +253,40 @@ def test_binary_sensor_resilient_to_missing_network_status() -> None:
     assert _diag_binary(coord, "ethernet_connected").is_on is None
     assert _diag_binary(coord, "time_synchronized").is_on is None
     assert _diag_binary(coord, "backend_connected").is_on is True
+
+
+# ---------------------------------------------------------------------------
+# Availability when the charger has vanished from the cloud
+# ---------------------------------------------------------------------------
+
+
+def test_diagnostic_sensor_unavailable_when_diag_missing() -> None:
+    """Diagnostic sensors must report unavailable when the charger has no diag entry."""
+    coord = MagicMock()
+    coord.last_update_success = True
+    # Charger present but no diagnostics for this serial.
+    coord.data = RatioData(
+        chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
+        diagnostics={},
+    )
+    assert _diag_sensor(coord, "cpc_serial_number").available is False
+
+
+def test_diagnostic_binary_sensor_unavailable_when_diag_missing() -> None:
+    coord = MagicMock()
+    coord.last_update_success = True
+    coord.data = RatioData(
+        chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
+        diagnostics={},
+    )
+    assert _diag_binary(coord, "backend_connected").available is False
+
+
+def test_ocpp_sensor_unavailable_when_settings_missing() -> None:
+    coord = MagicMock()
+    coord.last_update_success = True
+    coord.data = RatioData(
+        chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
+        ocpp_settings={},
+    )
+    assert _ocpp_sensor(coord, "charge_point_identifier").available is False
