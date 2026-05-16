@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-05-16
+
 ### Added
 
 - New `binary_sensor.ratio_<serial>_charging` reports whether current is
