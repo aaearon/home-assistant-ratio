@@ -151,7 +151,7 @@ async def test_bond_issue_dismissed_on_disable(hass: HomeAssistant) -> None:
     # Submit with serial unchecked (False).
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        user_input={SERIAL: False},
+        user_input={"enabled": False, "poll_period_s": 3.0},
     )
 
     assert _r(result)["type"] == FlowResultType.CREATE_ENTRY
@@ -170,7 +170,7 @@ async def test_bond_issue_not_dismissed_when_kept_enabled(hass: HomeAssistant) -
     # Submit with serial kept checked (True).
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        user_input={SERIAL: True},
+        user_input={"enabled": True, "poll_period_s": 3.0},
     )
 
     assert _r(result)["type"] == FlowResultType.CREATE_ENTRY

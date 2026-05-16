@@ -10,7 +10,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ratio.const import CONF_BLE_ENABLED_SERIALS, DOMAIN
+from custom_components.ratio.const import (
+    CONF_BLE_ENABLED_SERIALS,
+    CONF_BLE_POLL_PERIODS,
+    DOMAIN,
+)
 from tests.conftest import _r
 
 
@@ -186,15 +190,115 @@ async def test_options_flow_removes_serial(hass: HomeAssistant) -> None:
     ):
         result = await hass.config_entries.options.async_init(entry.entry_id)
 
+    # async_step_init redirects straight into the per-charger substep.
     assert _r(result)["type"] == FlowResultType.FORM
-    assert _r(result)["step_id"] == "init"
+    assert _r(result)["step_id"] == "charger"
+    assert _r(result)["description_placeholders"] == {"serial": serial}
+    schema_keys = {str(k) for k in _r(result)["data_schema"].schema}
+    assert {"enabled", "poll_period_s"} <= schema_keys
 
     # Submit with the serial unchecked (False).
     result2 = await hass.config_entries.options.async_configure(
         result["flow_id"],
-        user_input={serial: False},
+        user_input={"enabled": False, "poll_period_s": 3.0},
     )
     await hass.async_block_till_done()
 
     assert _r(result2)["type"] == FlowResultType.CREATE_ENTRY
     assert serial not in _r(result2)["data"].get(CONF_BLE_ENABLED_SERIALS, [])
+
+
+@pytest.mark.asyncio
+async def test_options_flow_persists_poll_period(hass: HomeAssistant) -> None:
+    """Options flow stores the per-serial poll period under CONF_BLE_POLL_PERIODS."""
+    serial = "P12345678901234"
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        unique_id="user@example.com",
+        options={CONF_BLE_ENABLED_SERIALS: [serial]},
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.ratio.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    result2 = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={"enabled": True, "poll_period_s": 1.5},
+    )
+    await hass.async_block_till_done()
+
+    assert _r(result2)["type"] == FlowResultType.CREATE_ENTRY
+    assert _r(result2)["data"][CONF_BLE_POLL_PERIODS] == {serial: 1.5}
+
+
+@pytest.mark.asyncio
+async def test_options_flow_preserves_period_on_disable(
+    hass: HomeAssistant,
+) -> None:
+    """Disabling a charger keeps its existing poll period entry intact.
+
+    A user who set a custom period, then toggled BLE off, must see that
+    value again on re-enable instead of a silent reset to the default.
+    """
+    serial = "P12345678901234"
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        unique_id="user@example.com",
+        options={
+            CONF_BLE_ENABLED_SERIALS: [serial],
+            CONF_BLE_POLL_PERIODS: {serial: 1.5},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.ratio.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    # Disable the charger; the form's poll_period_s field is irrelevant here.
+    result2 = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={"enabled": False, "poll_period_s": 3.0},
+    )
+    await hass.async_block_till_done()
+
+    assert _r(result2)["type"] == FlowResultType.CREATE_ENTRY
+    assert _r(result2)["data"][CONF_BLE_ENABLED_SERIALS] == []
+    assert _r(result2)["data"][CONF_BLE_POLL_PERIODS] == {serial: 1.5}
+
+
+@pytest.mark.parametrize("bad_period", [0.5, 60.5])
+@pytest.mark.asyncio
+async def test_options_flow_rejects_out_of_range_period(
+    hass: HomeAssistant, bad_period: float
+) -> None:
+    """Out-of-range poll periods are rejected; options remain unchanged."""
+    from homeassistant.data_entry_flow import InvalidData
+
+    serial = "P12345678901234"
+    original_options = {CONF_BLE_ENABLED_SERIALS: [serial]}
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        unique_id="user@example.com",
+        options=dict(original_options),
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.ratio.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={"enabled": True, "poll_period_s": bad_period},
+        )
+
+    # Options were not mutated: no CONF_BLE_POLL_PERIODS key persisted.
+    assert CONF_BLE_POLL_PERIODS not in entry.options
+    assert entry.options == original_options

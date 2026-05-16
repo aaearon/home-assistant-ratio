@@ -99,7 +99,7 @@ The charger advertises as `RATIO_P<serial>` (e.g. `RATIO_P00000000013428`). Use 
 
 ### Enabling and operating BLE
 
-After pairing, HA shows a **"Discovered: Ratio Charger \<serial\>"** notification under **Settings → Devices & Services**. Click **Configure** to enable; per-phase sensors appear within ~45 s. Disable later via **Configure** on the integration.
+After pairing, HA shows a **"Discovered: Ratio Charger \<serial\>"** notification under **Settings → Devices & Services**. Click **Configure** to enable; per-phase sensors appear within ~45 s. Disable later via **Configure** on the integration. Per-charger **BLE poll period** (seconds, 1–60, default 3) is exposed in the same Configure dialog — leave at 3 s unless you have a reason to deviate.
 
 Only one BLE central can connect at a time — opening the Ratio mobile app preempts HA, and BLE entities show **unavailable** until the app releases the link (~45 s). If the bond is lost (factory reset, re-pair from phone), HA creates a **Repair issue** with re-bond instructions.
 
