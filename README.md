@@ -35,7 +35,7 @@ One device per charger, with the following entities:
 | sensor | `charging_state` | `charger_status.indicators.charging_state` |
 | sensor (diagnostic, disabled by default) | `firmware_update_status` | `charger_firmware_status.firmware_update_status` |
 | sensor | `last_session_energy`, `last_session_duration`, `last_session_started_at`, `last_session_ended_at`, `last_session_vehicle` | derived from most recent session in history |
-| binary_sensor | `vehicle_connected`, `charge_session_active`, `charging_paused`, `error`, `charging_disabled` (with `reason` attribute), `charging_authorized`, `power_reduced_by_dso` | derived from `charger_status.indicators` |
+| binary_sensor | `vehicle_connected`, `charging`, `charge_session_active`, `charging_paused`, `error`, `charging_disabled` (with `reason` attribute), `charging_authorized`, `power_reduced_by_dso` | derived from `charger_status.indicators`. `charging` reports whether current is flowing (`chargingState in {Charging, ChargingWithVentilation, PausedByEVSE}`); `charge_session_active` ("Session active") reports the raw cloud `isChargeSessionActive` flag, which stays on through the post-stop VehicleDetected phase. On installs that pre-date this release the new sensor lands at `binary_sensor.ratio_<serial>_charging_2` because the slug is already taken; fresh installs get clean `_charging` / `_session_active` entity IDs. |
 | binary_sensor (diagnostic) | `firmware_update_available`, `firmware_update_allowed` | `charger_firmware_status` |
 | switch | `charging` | `start_charge` / `stop_charge`, gated on `is_charge_start_allowed` / `is_charge_stop_allowed` |
 | select | `charge_mode` | `user_settings.charging_mode` (PUT via `set_user_settings`) |
