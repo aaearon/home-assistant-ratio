@@ -30,12 +30,9 @@ from .const import (
     DOMAIN,
 )
 
-_PERIOD_KEY_SUFFIX = "__poll_period_s"
-
-
-def _period_key(serial: str) -> str:
-    """Flat options-form field key for the per-serial poll period."""
-    return f"{serial}{_PERIOD_KEY_SUFFIX}"
+# Per-charger form field keys. Static so HA translations can label them.
+_FIELD_ENABLED = "enabled"
+_FIELD_POLL_PERIOD = "poll_period_s"
 
 if TYPE_CHECKING:
     from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
@@ -291,12 +288,25 @@ class RatioConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class RatioOptionsFlow(OptionsFlow):
-    """Handle options for the Ratio integration (BLE charger management)."""
+    """Handle options for the Ratio integration (BLE charger management).
+
+    One ``charger`` substep per BLE-enabled serial — keeps the form's field
+    keys static (``enabled``, ``poll_period_s``) so HA translations can
+    render proper labels rather than the raw serial-suffixed keys.
+    """
+
+    def __init__(self) -> None:
+        self._all_serials: list[str] = []
+        self._original_periods: dict[str, float] = {}
+        self._queue: list[str] = []
+        self._current_serial: str | None = None
+        self._enabled: list[str] = []
+        self._periods: dict[str, float] = {}
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Manage BLE-enabled chargers."""
+        """Prime the per-charger walkthrough."""
         serials: list[str] = list(
             self.config_entry.options.get(CONF_BLE_ENABLED_SERIALS, [])
         )
@@ -304,14 +314,36 @@ class RatioOptionsFlow(OptionsFlow):
         if not serials:
             return self.async_abort(reason="no_ble_chargers")
 
-        existing_periods: dict[str, float] = self.config_entry.options.get(
-            CONF_BLE_POLL_PERIODS, {}
+        self._all_serials = list(serials)
+        self._original_periods = dict(
+            self.config_entry.options.get(CONF_BLE_POLL_PERIODS, {})
         )
+        # Start the period map from the saved values so a user who only
+        # disables a charger preserves the period they previously chose;
+        # re-enabling later restores it instead of silently resetting to the
+        # default.
+        self._periods = dict(self._original_periods)
+        self._queue = list(serials)
+        self._enabled = []
+        return await self.async_step_charger()
 
-        if user_input is not None:
-            # Keep only serials the user left checked.
-            enabled = [s for s in serials if user_input.get(s, True)]
-            disabled = [s for s in serials if s not in enabled]
+    async def async_step_charger(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Show one form per BLE-enabled serial, then finalize."""
+        if user_input is not None and self._current_serial is not None:
+            serial = self._current_serial
+            if user_input.get(_FIELD_ENABLED, True):
+                self._enabled.append(serial)
+                self._periods[serial] = float(
+                    user_input.get(_FIELD_POLL_PERIOD, DEFAULT_BLE_POLL_PERIOD_S)
+                )
+            # Disabled: leave the entry in self._periods untouched so it's
+            # restored on re-enable.
+            self._current_serial = None
+
+        if not self._queue:
+            disabled = [s for s in self._all_serials if s not in self._enabled]
             if disabled and hasattr(self.config_entry, "runtime_data"):
                 ble_coordinators = getattr(
                     self.config_entry.runtime_data, "ble_coordinators", {}
@@ -319,29 +351,31 @@ class RatioOptionsFlow(OptionsFlow):
                 for serial in disabled:
                     if (coord := ble_coordinators.get(serial)) is not None:
                         await coord.async_dismiss_bond_issue()
-            periods = {
-                s: float(user_input.get(_period_key(s), DEFAULT_BLE_POLL_PERIOD_S))
-                for s in enabled
-            }
             return self.async_create_entry(
                 data={
                     **self.config_entry.options,
-                    CONF_BLE_ENABLED_SERIALS: enabled,
-                    CONF_BLE_POLL_PERIODS: periods,
+                    CONF_BLE_ENABLED_SERIALS: self._enabled,
+                    CONF_BLE_POLL_PERIODS: self._periods,
                 }
             )
 
-        schema_dict: dict[Any, Any] = {}
-        for serial in serials:
-            schema_dict[vol.Optional(serial, default=True)] = bool
-            schema_dict[
-                vol.Optional(
-                    _period_key(serial),
-                    default=existing_periods.get(serial, DEFAULT_BLE_POLL_PERIOD_S),
-                )
-            ] = vol.All(
-                vol.Coerce(float),
-                vol.Range(min=BLE_POLL_PERIOD_MIN_S, max=BLE_POLL_PERIOD_MAX_S),
-            )
-        schema = vol.Schema(schema_dict)
-        return self.async_show_form(step_id="init", data_schema=schema)
+        self._current_serial = self._queue.pop(0)
+        existing = self._original_periods.get(
+            self._current_serial, DEFAULT_BLE_POLL_PERIOD_S
+        )
+        schema = vol.Schema(
+            {
+                vol.Required(_FIELD_ENABLED, default=True): bool,
+                vol.Required(_FIELD_POLL_PERIOD, default=existing): vol.All(
+                    vol.Coerce(float),
+                    vol.Range(
+                        min=BLE_POLL_PERIOD_MIN_S, max=BLE_POLL_PERIOD_MAX_S
+                    ),
+                ),
+            }
+        )
+        return self.async_show_form(
+            step_id="charger",
+            data_schema=schema,
+            description_placeholders={"serial": self._current_serial},
+        )

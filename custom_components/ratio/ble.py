@@ -168,7 +168,7 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         ESPHome BT proxy is still advertising it under a rotating RPA, the
         parent's flag goes stuck-False — entities would then read
         ``unavailable`` even though the session loop's proxy-routed link is
-        live and pushing fresh snapshots every 3 s. Riding directly on
+        live and pushing fresh snapshots at the configured cadence. Riding directly on
         ``BleClient.is_connected`` keeps availability synchronised with what
         the transport actually reports.
         """

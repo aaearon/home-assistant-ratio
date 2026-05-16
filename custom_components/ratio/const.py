@@ -9,7 +9,9 @@ CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_BLE_ENABLED_SERIALS = "ble_enabled_serials"
 CONF_BLE_ADDRESSES = "ble_addresses"
-CONF_BLE_POLL_PERIODS = "ble_poll_periods"  # dict[serial, float seconds]
+CONF_BLE_POLL_PERIODS = "ble_poll_periods"
+"""Options key for per-charger BLE poll periods. Value: ``dict[str, float]``
+mapping charger serial → poll period in seconds."""
 
 DEFAULT_BLE_POLL_PERIOD_S = 3.0
 BLE_POLL_PERIOD_MIN_S = 1.0
