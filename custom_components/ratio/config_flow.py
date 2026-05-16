@@ -20,7 +20,22 @@ from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import CONF_BLE_ADDRESSES, CONF_BLE_ENABLED_SERIALS, DOMAIN
+from .const import (
+    BLE_POLL_PERIOD_MAX_S,
+    BLE_POLL_PERIOD_MIN_S,
+    CONF_BLE_ADDRESSES,
+    CONF_BLE_ENABLED_SERIALS,
+    CONF_BLE_POLL_PERIODS,
+    DEFAULT_BLE_POLL_PERIOD_S,
+    DOMAIN,
+)
+
+_PERIOD_KEY_SUFFIX = "__poll_period_s"
+
+
+def _period_key(serial: str) -> str:
+    """Flat options-form field key for the per-serial poll period."""
+    return f"{serial}{_PERIOD_KEY_SUFFIX}"
 
 if TYPE_CHECKING:
     from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
@@ -289,6 +304,10 @@ class RatioOptionsFlow(OptionsFlow):
         if not serials:
             return self.async_abort(reason="no_ble_chargers")
 
+        existing_periods: dict[str, float] = self.config_entry.options.get(
+            CONF_BLE_POLL_PERIODS, {}
+        )
+
         if user_input is not None:
             # Keep only serials the user left checked.
             enabled = [s for s in serials if user_input.get(s, True)]
@@ -300,11 +319,29 @@ class RatioOptionsFlow(OptionsFlow):
                 for serial in disabled:
                     if (coord := ble_coordinators.get(serial)) is not None:
                         await coord.async_dismiss_bond_issue()
+            periods = {
+                s: float(user_input.get(_period_key(s), DEFAULT_BLE_POLL_PERIOD_S))
+                for s in enabled
+            }
             return self.async_create_entry(
-                data={**self.config_entry.options, CONF_BLE_ENABLED_SERIALS: enabled}
+                data={
+                    **self.config_entry.options,
+                    CONF_BLE_ENABLED_SERIALS: enabled,
+                    CONF_BLE_POLL_PERIODS: periods,
+                }
             )
 
-        schema = vol.Schema(
-            {vol.Optional(serial, default=True): bool for serial in serials}
-        )
+        schema_dict: dict[Any, Any] = {}
+        for serial in serials:
+            schema_dict[vol.Optional(serial, default=True)] = bool
+            schema_dict[
+                vol.Optional(
+                    _period_key(serial),
+                    default=existing_periods.get(serial, DEFAULT_BLE_POLL_PERIOD_S),
+                )
+            ] = vol.All(
+                vol.Coerce(float),
+                vol.Range(min=BLE_POLL_PERIOD_MIN_S, max=BLE_POLL_PERIOD_MAX_S),
+            )
+        schema = vol.Schema(schema_dict)
         return self.async_show_form(step_id="init", data_schema=schema)

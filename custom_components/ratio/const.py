@@ -9,6 +9,11 @@ CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_BLE_ENABLED_SERIALS = "ble_enabled_serials"
 CONF_BLE_ADDRESSES = "ble_addresses"
+CONF_BLE_POLL_PERIODS = "ble_poll_periods"  # dict[serial, float seconds]
+
+DEFAULT_BLE_POLL_PERIOD_S = 3.0
+BLE_POLL_PERIOD_MIN_S = 1.0
+BLE_POLL_PERIOD_MAX_S = 60.0
 
 SERVICE_START_CHARGE = "start_charge"
 SERVICE_STOP_CHARGE = "stop_charge"

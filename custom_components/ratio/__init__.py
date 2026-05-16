@@ -18,7 +18,14 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .ble import RatioBleCoordinator
-from .const import CONF_BLE_ADDRESSES, CONF_BLE_ENABLED_SERIALS, DOMAIN, PLATFORMS
+from .const import (
+    CONF_BLE_ADDRESSES,
+    CONF_BLE_ENABLED_SERIALS,
+    CONF_BLE_POLL_PERIODS,
+    DEFAULT_BLE_POLL_PERIOD_S,
+    DOMAIN,
+    PLATFORMS,
+)
 from .coordinator import RatioCoordinator, RatioHistoryCoordinator
 from .services import async_setup_services, async_unload_services
 
@@ -76,6 +83,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> boo
         # Wire up BLE coordinators for any serials the user has enabled.
         ble_coordinators: dict[str, RatioBleCoordinator] = {}
         ble_addresses: dict[str, str] = entry.options.get(CONF_BLE_ADDRESSES, {})
+        ble_poll_periods: dict[str, float] = entry.options.get(
+            CONF_BLE_POLL_PERIODS, {}
+        )
         for serial in entry.options.get(CONF_BLE_ENABLED_SERIALS, []):
             address = ble_addresses.get(serial)
             if address is None:
@@ -88,6 +98,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> boo
                 logger=_LOGGER,
                 address=address,
                 serial=serial,
+                poll_period_s=ble_poll_periods.get(serial, DEFAULT_BLE_POLL_PERIOD_S),
             )
             # async_start() subscribes to BT events; the returned cancel callback
             # is registered with async_on_unload so cleanup is automatic.

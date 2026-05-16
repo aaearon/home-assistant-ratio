@@ -131,7 +131,9 @@ def _make_service_info(
     return info
 
 
-def _make_coordinator(hass: HomeAssistant) -> RatioBleCoordinator:
+def _make_coordinator(
+    hass: HomeAssistant, *, poll_period_s: float = 3.0
+) -> RatioBleCoordinator:
     """Build a RatioBleCoordinator with the parent __init__ stubbed out."""
     import logging
 
@@ -155,6 +157,7 @@ def _make_coordinator(hass: HomeAssistant) -> RatioBleCoordinator:
             logger=logging.getLogger(__name__),
             address="AA:BB:CC:DD:EE:FF",
             serial="SN001",
+            poll_period_s=poll_period_s,
         )
     return coord
 
@@ -203,6 +206,29 @@ async def test_run_poll_pushes_snapshot_to_self_data(hass: HomeAssistant) -> Non
     assert coord.available is True
     # Listeners notified at least once per yield.
     assert listeners
+
+
+@pytest.mark.asyncio
+async def test_run_poll_uses_configured_period(hass: HomeAssistant) -> None:
+    """``_run_poll`` forwards ``self._poll_period_s`` to ``poll_sensor_values``."""
+    sensor_resp = _make_sensor_response()
+    coord = _make_coordinator(hass, poll_period_s=1.5)
+    _stub_coordinator_for_session(coord)
+    coord.async_update_listeners = MagicMock()
+
+    client = _make_ble_client_mock(sensor_resp)
+    captured: dict[str, float] = {}
+
+    async def _poll(period: float = 3.0):
+        captured["period"] = period
+        yield sensor_resp
+
+    client.poll_sensor_values = _poll
+    coord._client = client
+
+    await coord._run_poll(client)
+
+    assert captured["period"] == 1.5
 
 
 @pytest.mark.asyncio

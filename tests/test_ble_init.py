@@ -13,6 +13,8 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.ratio.const import (
     CONF_BLE_ADDRESSES,
     CONF_BLE_ENABLED_SERIALS,
+    CONF_BLE_POLL_PERIODS,
+    DEFAULT_BLE_POLL_PERIOD_S,
     DOMAIN,
 )
 
@@ -104,6 +106,7 @@ async def test_ble_coordinator_started_for_enabled_serial(
         logger=logging.getLogger("custom_components.ratio"),
         address=_ADDRESS,
         serial=_SERIAL,
+        poll_period_s=DEFAULT_BLE_POLL_PERIOD_S,
     )
     ble_coord_instance.async_start.assert_called_once()
     assert entry.runtime_data.ble_coordinators == {_SERIAL: ble_coord_instance}
@@ -134,6 +137,42 @@ async def test_no_ble_coordinators_when_not_configured(
     assert result is True
     mock_ble_cls.assert_not_called()
     assert entry.runtime_data.ble_coordinators == {}
+
+
+@pytest.mark.asyncio
+async def test_setup_threads_poll_period_from_options(hass: HomeAssistant) -> None:
+    """A per-serial poll period in options is forwarded to RatioBleCoordinator."""
+    from custom_components.ratio import async_setup_entry
+
+    client = _make_client_mock()
+
+    ble_coord_instance = MagicMock()
+    ble_coord_instance.async_start = MagicMock(return_value=MagicMock())
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        options={
+            CONF_BLE_ENABLED_SERIALS: [_SERIAL],
+            CONF_BLE_ADDRESSES: {_SERIAL: _ADDRESS},
+            CONF_BLE_POLL_PERIODS: {_SERIAL: 2.0},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with ExitStack() as stack:
+        _enter_base_patches(stack, hass, client)
+        mock_ble_cls = stack.enter_context(
+            patch(
+                "custom_components.ratio.RatioBleCoordinator",
+                return_value=ble_coord_instance,
+            )
+        )
+        result = await async_setup_entry(hass, entry)
+
+    assert result is True
+    call_kwargs = mock_ble_cls.call_args.kwargs
+    assert call_kwargs["poll_period_s"] == 2.0
 
 
 @pytest.mark.asyncio

@@ -64,7 +64,6 @@ _LOGGER = logging.getLogger(__name__)
 _BACKOFF_INITIAL_S = 1.0
 _BACKOFF_MAX_S = 60.0
 _BACKOFF_BOND_S = 30.0
-_POLL_PERIOD_S = 3.0
 _SESSION_TASK_CANCEL_TIMEOUT_S = 2.0
 # Bounded wait on ``_wake_event`` so a missed advert callback after a transport
 # drop can't park the loop indefinitely — the timeout lets the loop fall through
@@ -119,7 +118,7 @@ def _scanner_info(hass: HomeAssistant, address: str | None) -> tuple[str | None,
 
 
 class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
-    """Holds a live BLE connection and pushes sensor snapshots every ~3 s."""
+    """Holds a live BLE connection and pushes sensor snapshots at the configured cadence (default 3 s)."""
 
     def __init__(
         self,
@@ -127,6 +126,7 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
         logger: logging.Logger,
         address: str,
         serial: str,
+        poll_period_s: float,
     ) -> None:
         super().__init__(
             hass=hass,
@@ -138,6 +138,7 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             connectable=True,
         )
         self.serial = serial
+        self._poll_period_s = poll_period_s
         # Wi-Fi service calls serialize against the session loop's live client
         # at the integration layer; aioratio's transaction lock then serializes
         # individual commands against the running poll.
@@ -484,9 +485,9 @@ class RatioBleCoordinator(ActiveBluetoothDataUpdateCoordinator[BleSnapshot]):
             raise
 
     async def _run_poll(self, client: BleClient) -> None:
-        """Drive the 3 s poll loop against ``client`` and push snapshots."""
+        """Drive the configured-cadence poll loop against ``client`` and push snapshots."""
         version = client.protocol_version
-        async for resp in client.poll_sensor_values(period=_POLL_PERIOD_S):
+        async for resp in client.poll_sensor_values(period=self._poll_period_s):
             self.data = self._snapshot_from_response(resp, version)
             self.last_poll_successful = True
             self._available = True

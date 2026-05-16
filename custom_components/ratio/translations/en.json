@@ -59,7 +59,7 @@
     "step": {
       "init": {
         "title": "Bluetooth Settings",
-        "description": "Uncheck a charger to disable Bluetooth for it.",
+        "description": "Uncheck a charger to disable Bluetooth for it. Poll period (seconds, 1–60) controls how often BLE sensor values refresh; default 3 s matches the Ratio app.",
         "data": {}
       }
     },

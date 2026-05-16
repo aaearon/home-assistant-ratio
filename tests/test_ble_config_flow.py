@@ -10,7 +10,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ratio.const import CONF_BLE_ENABLED_SERIALS, DOMAIN
+from custom_components.ratio.const import (
+    CONF_BLE_ENABLED_SERIALS,
+    CONF_BLE_POLL_PERIODS,
+    DEFAULT_BLE_POLL_PERIOD_S,
+    DOMAIN,
+)
 from tests.conftest import _r
 
 
@@ -188,6 +193,9 @@ async def test_options_flow_removes_serial(hass: HomeAssistant) -> None:
 
     assert _r(result)["type"] == FlowResultType.FORM
     assert _r(result)["step_id"] == "init"
+    # Period field is exposed per serial alongside the enable bool.
+    schema_keys = {str(k) for k in _r(result)["data_schema"].schema}
+    assert f"{serial}__poll_period_s" in schema_keys
 
     # Submit with the serial unchecked (False).
     result2 = await hass.config_entries.options.async_configure(
@@ -198,3 +206,57 @@ async def test_options_flow_removes_serial(hass: HomeAssistant) -> None:
 
     assert _r(result2)["type"] == FlowResultType.CREATE_ENTRY
     assert serial not in _r(result2)["data"].get(CONF_BLE_ENABLED_SERIALS, [])
+
+
+@pytest.mark.asyncio
+async def test_options_flow_persists_poll_period(hass: HomeAssistant) -> None:
+    """Options flow stores the per-serial poll period under CONF_BLE_POLL_PERIODS."""
+    serial = "P12345678901234"
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        unique_id="user@example.com",
+        options={CONF_BLE_ENABLED_SERIALS: [serial]},
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.ratio.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    result2 = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={serial: True, f"{serial}__poll_period_s": 1.5},
+    )
+    await hass.async_block_till_done()
+
+    assert _r(result2)["type"] == FlowResultType.CREATE_ENTRY
+    assert _r(result2)["data"][CONF_BLE_POLL_PERIODS] == {serial: 1.5}
+
+
+@pytest.mark.asyncio
+async def test_options_flow_rejects_out_of_range_period(hass: HomeAssistant) -> None:
+    """A poll period below the 1 s minimum is rejected by voluptuous."""
+    from homeassistant.data_entry_flow import InvalidData
+
+    serial = "P12345678901234"
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        unique_id="user@example.com",
+        options={CONF_BLE_ENABLED_SERIALS: [serial]},
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.ratio.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            user_input={serial: True, f"{serial}__poll_period_s": 0.5},
+        )
+
+    # Sanity: the default is still 3 s; the user's invalid input did not persist.
+    assert DEFAULT_BLE_POLL_PERIOD_S == 3.0
