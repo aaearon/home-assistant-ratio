@@ -27,7 +27,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import RatioConfigEntry
-from .const import DOMAIN
+from .const import ACTIVE_CHARGING_STATES, DOMAIN
 from .coordinator import RatioCoordinator
 
 PARALLEL_UPDATES = 1
@@ -103,9 +103,19 @@ class RatioChargingSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
         if ov is None or ov.charger_status is None:
             return None
         ind = ov.charger_status.indicators
-        if ind is None:
+        # ``is_charge_session_active`` is *not* a substitute for charging_state:
+        # a session record stays open across the post-stop VehicleDetected phase
+        # and would otherwise pin the switch back to ON after each poll (#37).
+        # Treat a missing chargingState as unknown so a transient empty cloud
+        # payload doesn't lie. Defer to ``is_charging_disabled`` because the
+        # cloud occasionally emits chargingState=Charging while the charger has
+        # been administratively disabled (mirrors the Android domain model's
+        # Disabled-before-raw-state derivation in ChargerStatusModel.java:385).
+        if ind is None or ind.charging_state is None:
             return None
-        return bool(ind.is_charge_session_active)
+        if ind.is_charging_disabled:
+            return False
+        return ind.charging_state in ACTIVE_CHARGING_STATES
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Start a charge session."""

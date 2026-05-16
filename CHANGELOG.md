@@ -27,6 +27,15 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- Charging switch (`switch.ratio_<serial>_charging`) no longer gets stuck in
+  the ON state after the user stops a session while the vehicle is still
+  plugged in. The switch (and the `binary_sensor.charging` it shares logic
+  with) now reflects whether current is actually flowing
+  (`chargingState in {Charging, ChargingWithVentilation, PausedByEVSE}`,
+  with `isChargingDisabled` forcing off and a missing `chargingState`
+  reporting `unknown` rather than `off`)
+  instead of whether a session record exists on the cloud side, which
+  remained `true` through the post-stop VehicleDetected phase. (#37)
 - BLE diagnostics no longer leak charger serial numbers as top-level dict
   keys; the section now mirrors the cloud-data redaction pattern (list of
   dicts with a redacted `serial_number` field).

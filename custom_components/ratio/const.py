@@ -40,3 +40,13 @@ PLATFORMS: list[str] = [
 # Persistent storage for coordinator-level user preferences (preferred vehicle).
 STORAGE_VERSION = 1
 STORAGE_KEY_PREFERENCES = "preferences"
+
+# ChargingState values that represent an *active charge request* — the user
+# wants the car to be charging and the EVSE is honoring it (even if momentarily
+# paused by the EVSE itself, e.g. for load-balancing). Used by `switch.charging`
+# (start/stop control) and `binary_sensor.charging` (live "is charging" truth).
+# Distinct from the raw `isChargeSessionActive` flag, which stays True through
+# the post-stop VehicleDetected window while the cable remains plugged in.
+ACTIVE_CHARGING_STATES = frozenset(
+    {"Charging", "ChargingWithVentilation", "PausedByEVSE"}
+)

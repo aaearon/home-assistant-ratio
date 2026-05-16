@@ -27,7 +27,7 @@ def _make_overview(
     charging_disabled_reason: str | None = None,
     charging_authorized: bool = True,
     power_reduced_by_dso: bool = False,
-    charging_state: str = "idle",
+    charging_state: str | None = "idle",
     fw_update_available: bool = False,
     fw_update_allowed: bool = False,
 ) -> ChargerOverview:
@@ -354,6 +354,48 @@ async def test_session_active_sensor_tracks_raw_flag(
     coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov_off}))
     await hass.async_block_till_done()
     state = hass.states.get(_entity_id("charge_session_active"))
+    assert state is not None
+    assert state.state == "off"
+
+
+@pytest.mark.asyncio
+async def test_charging_sensor_unknown_when_charging_state_missing(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """``charging`` sensor reports ``unknown`` when the cloud returns
+    ``chargingState=null`` — never a confident ``off`` from missing data.
+    Same hardening landed on ``switch.charging`` (see test_switch.py)."""
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    ov = _make_overview(charging_state=None)
+    coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
+    await hass.async_block_till_done()
+
+    state = hass.states.get(_entity_id("charging"))
+    assert state is not None
+    assert state.state == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_charging_sensor_off_when_disabled_overrides_active_state(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """``isChargingDisabled=true`` forces ``charging`` sensor off even if
+    the cloud still reports ``chargingState=Charging``. Matches the Android
+    domain model's Disabled-before-raw-state derivation."""
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+
+    ov = _make_overview(charging_state="Charging", charging_disabled=True)
+    coordinator.async_set_updated_data(RatioData(chargers={SERIAL: ov}))
+    await hass.async_block_till_done()
+
+    state = hass.states.get(_entity_id("charging"))
     assert state is not None
     assert state.state == "off"
 

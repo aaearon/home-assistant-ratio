@@ -31,7 +31,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import RatioConfigEntry
-from .const import DOMAIN
+from .const import ACTIVE_CHARGING_STATES, DOMAIN
 from .coordinator import RatioCoordinator
 
 PARALLEL_UPDATES = 0
@@ -53,21 +53,13 @@ def _ind(ov: ChargerOverview) -> Any:
     )
 
 
-# Charging states that imply current is (or could momentarily be) flowing.
-# Mirrors ``RatioChargingSwitch._ACTIVE_CHARGING_STATES`` (see switch.py /
-# PR #39); kept in sync intentionally. A future refactor can hoist this to
-# a shared module once both PRs land — held inline for now to keep the
-# diff narrow.
-_ACTIVE_CHARGING_STATES = frozenset(
-    {"Charging", "ChargingWithVentilation", "PausedByEVSE"}
-)
-
-
 def _is_actively_charging(ov: ChargerOverview) -> bool | None:
     ind = _ind(ov)
-    if ind is None:
+    if ind is None or ind.charging_state is None:
         return None
-    return ind.charging_state in _ACTIVE_CHARGING_STATES
+    if ind.is_charging_disabled:
+        return False
+    return ind.charging_state in ACTIVE_CHARGING_STATES
 
 
 BINARY_SENSOR_DESCRIPTIONS: tuple[RatioBinarySensorEntityDescription, ...] = (
