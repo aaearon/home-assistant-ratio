@@ -53,7 +53,10 @@ async def test_switch_is_on_when_charging(
     setup_integration,
     mock_ratio_client: MagicMock,
 ) -> None:
-    """Switch reports 'on' when charge session is active."""
+    """Switch reports 'on' when ``chargingState`` is in the active set
+    (here: ``Charging``). The session-active flag alone is not sufficient
+    — see ``test_switch_is_off_when_session_active_but_not_charging`` for
+    the post-stop VehicleDetected case that motivated #37/#39."""
     entry = setup_integration
     coordinator = entry.runtime_data.coordinator
 
