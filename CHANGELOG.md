@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- New `binary_sensor.ratio_<serial>_charging` reports whether current is
+  actually flowing (`chargingState in {Charging, ChargingWithVentilation,
+  PausedByEVSE}`), matching the Android app's power-display semantics.
+  Recommended for dashboards and automations that ask "is the car charging
+  right now?". (#40)
+
+### Changed
+
+- The existing binary sensor backed by `isChargeSessionActive` was renamed
+  from "Charging" to "Session active". Its value is unchanged — it still
+  reports whether the cloud holds an open session record, which stays `on`
+  through the post-stop VehicleDetected window. Existing automations
+  referencing the entity by `entity_id` keep working with identical
+  semantics. **Upgrade note:** existing installs will see the new
+  "Charging" sensor land at `binary_sensor.ratio_<serial>_charging_2`
+  because the `_charging` slug is already taken by the renamed entity.
+  Rename via the HA UI if desired. Fresh installs get clean entity_ids
+  (`_charging` for the new, `_session_active` for the renamed). (#40)
+
 ### Fixed
 
 - BLE diagnostics no longer leak charger serial numbers as top-level dict
