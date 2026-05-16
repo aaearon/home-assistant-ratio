@@ -4,12 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-05-16
+
 ### Changed
 
 - **BLE poll period is now configurable per charger** via the integration's
   Configure dialog (default 3 s, range 1–60 s). Lower values give faster
   sensor refresh on capable proxy setups; higher values reduce radio
-  activity. Previously hard-coded at 3 s.
+  activity. Previously hard-coded at 3 s. (#42)
 
 ## [0.12.0] — 2026-05-16
 
