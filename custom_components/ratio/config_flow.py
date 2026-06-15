@@ -19,6 +19,12 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_EMAIL, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+)
 
 from .const import (
     BLE_POLL_PERIOD_MAX_S,
@@ -297,7 +303,6 @@ class RatioOptionsFlow(OptionsFlow):
 
     def __init__(self) -> None:
         self._all_serials: list[str] = []
-        self._original_periods: dict[str, float] = {}
         self._queue: list[str] = []
         self._current_serial: str | None = None
         self._enabled: list[str] = []
@@ -315,14 +320,13 @@ class RatioOptionsFlow(OptionsFlow):
             return self.async_abort(reason="no_ble_chargers")
 
         self._all_serials = list(serials)
-        self._original_periods = dict(
-            self.config_entry.options.get(CONF_BLE_POLL_PERIODS, {})
-        )
         # Start the period map from the saved values so a user who only
         # disables a charger preserves the period they previously chose;
         # re-enabling later restores it instead of silently resetting to the
         # default.
-        self._periods = dict(self._original_periods)
+        self._periods = dict(
+            self.config_entry.options.get(CONF_BLE_POLL_PERIODS, {})
+        )
         self._queue = list(serials)
         self._enabled = []
         return await self.async_step_charger()
@@ -351,24 +355,34 @@ class RatioOptionsFlow(OptionsFlow):
                 for serial in disabled:
                     if (coord := ble_coordinators.get(serial)) is not None:
                         await coord.async_dismiss_bond_issue()
+            # Persist only periods for serials walked this session; drop any
+            # orphan keys for serials that were removed externally.
+            periods = {
+                s: p for s, p in self._periods.items() if s in self._all_serials
+            }
             return self.async_create_entry(
                 data={
                     **self.config_entry.options,
                     CONF_BLE_ENABLED_SERIALS: self._enabled,
-                    CONF_BLE_POLL_PERIODS: self._periods,
+                    CONF_BLE_POLL_PERIODS: periods,
                 }
             )
 
         self._current_serial = self._queue.pop(0)
-        existing = self._original_periods.get(
+        existing = self._periods.get(
             self._current_serial, DEFAULT_BLE_POLL_PERIOD_S
         )
         schema = vol.Schema(
             {
-                vol.Required(_FIELD_ENABLED, default=True): bool,
-                vol.Required(_FIELD_POLL_PERIOD, default=existing): vol.All(
-                    vol.Coerce(float),
-                    vol.Range(min=BLE_POLL_PERIOD_MIN_S, max=BLE_POLL_PERIOD_MAX_S),
+                vol.Required(_FIELD_ENABLED, default=True): BooleanSelector(),
+                vol.Optional(_FIELD_POLL_PERIOD, default=existing): NumberSelector(
+                    NumberSelectorConfig(
+                        min=BLE_POLL_PERIOD_MIN_S,
+                        max=BLE_POLL_PERIOD_MAX_S,
+                        step=0.5,
+                        unit_of_measurement="s",
+                        mode=NumberSelectorMode.BOX,
+                    )
                 ),
             }
         )

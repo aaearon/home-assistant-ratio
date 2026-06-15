@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import math
+from typing import Any
+
 DOMAIN = "ratio"
 DEFAULT_SCAN_INTERVAL = 60  # seconds
 
@@ -16,6 +19,24 @@ mapping charger serial → poll period in seconds."""
 DEFAULT_BLE_POLL_PERIOD_S = 3.0
 BLE_POLL_PERIOD_MIN_S = 1.0
 BLE_POLL_PERIOD_MAX_S = 60.0
+
+
+def valid_poll_period(value: Any) -> float:
+    """Return ``value`` as a float if it is a finite number within the allowed
+    range, otherwise fall back to ``DEFAULT_BLE_POLL_PERIOD_S``.
+
+    Guards against corrupt or hand-edited stored values (None, non-numeric,
+    zero, negative, or out of range) that would otherwise busy-loop or crash
+    the BLE poller.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return DEFAULT_BLE_POLL_PERIOD_S
+    number = float(value)
+    if not math.isfinite(number):
+        return DEFAULT_BLE_POLL_PERIOD_S
+    if not BLE_POLL_PERIOD_MIN_S <= number <= BLE_POLL_PERIOD_MAX_S:
+        return DEFAULT_BLE_POLL_PERIOD_S
+    return number
 
 SERVICE_START_CHARGE = "start_charge"
 SERVICE_STOP_CHARGE = "stop_charge"

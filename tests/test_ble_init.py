@@ -175,6 +175,81 @@ async def test_setup_threads_poll_period_from_options(hass: HomeAssistant) -> No
     assert call_kwargs["poll_period_s"] == 2.0
 
 
+@pytest.mark.parametrize("bad_value", [0, -1, 999, None, "x"])
+@pytest.mark.asyncio
+async def test_corrupt_stored_poll_period_falls_back_to_default(
+    hass: HomeAssistant, bad_value: object
+) -> None:
+    """A corrupt stored poll period falls back to DEFAULT when forwarded."""
+    from custom_components.ratio import async_setup_entry
+
+    client = _make_client_mock()
+
+    ble_coord_instance = MagicMock()
+    ble_coord_instance.async_start = MagicMock(return_value=MagicMock())
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        options={
+            CONF_BLE_ENABLED_SERIALS: [_SERIAL],
+            CONF_BLE_ADDRESSES: {_SERIAL: _ADDRESS},
+            CONF_BLE_POLL_PERIODS: {_SERIAL: bad_value},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with ExitStack() as stack:
+        _enter_base_patches(stack, hass, client)
+        mock_ble_cls = stack.enter_context(
+            patch(
+                "custom_components.ratio.RatioBleCoordinator",
+                return_value=ble_coord_instance,
+            )
+        )
+        result = await async_setup_entry(hass, entry)
+
+    assert result is True
+    assert mock_ble_cls.call_args.kwargs["poll_period_s"] == DEFAULT_BLE_POLL_PERIOD_S
+
+
+@pytest.mark.asyncio
+async def test_valid_stored_poll_period_forwarded_unchanged(
+    hass: HomeAssistant,
+) -> None:
+    """A valid stored poll period is forwarded to RatioBleCoordinator as a float."""
+    from custom_components.ratio import async_setup_entry
+
+    client = _make_client_mock()
+
+    ble_coord_instance = MagicMock()
+    ble_coord_instance.async_start = MagicMock(return_value=MagicMock())
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        options={
+            CONF_BLE_ENABLED_SERIALS: [_SERIAL],
+            CONF_BLE_ADDRESSES: {_SERIAL: _ADDRESS},
+            CONF_BLE_POLL_PERIODS: {_SERIAL: 2.0},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with ExitStack() as stack:
+        _enter_base_patches(stack, hass, client)
+        mock_ble_cls = stack.enter_context(
+            patch(
+                "custom_components.ratio.RatioBleCoordinator",
+                return_value=ble_coord_instance,
+            )
+        )
+        result = await async_setup_entry(hass, entry)
+
+    assert result is True
+    assert mock_ble_cls.call_args.kwargs["poll_period_s"] == 2.0
+
+
 @pytest.mark.asyncio
 async def test_options_listener_registered(
     hass: HomeAssistant,

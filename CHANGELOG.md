@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- BLE poll period read from options is now validated on setup: a corrupt or
+  hand-edited stored value (None, non-numeric, zero, negative, or out of the
+  1–60 s range) falls back to the 3 s default instead of busy-looping or
+  crashing the poller.
+- The options walkthrough no longer carries orphan poll-period entries for
+  serials that were removed externally; only periods for serials walked this
+  session are persisted.
+- Disabling a charger in the options walkthrough no longer requires a valid
+  poll period — the field is now optional and falls back to its default when
+  left blank. Out-of-range values are still rejected.
+
+### Changed
+
+- The BLE poll-period field in the options flow now uses Home Assistant's
+  number/boolean selectors (`NumberSelector`/`BooleanSelector`), making
+  `const.py` the single source of the 1–60 s bounds.
+- Removed the redundant `_original_periods` flow field and the dead `init`
+  options-step strings (the step always redirects to `charger`).
+
 ## [0.13.0] — 2026-05-16
 
 ### Changed
