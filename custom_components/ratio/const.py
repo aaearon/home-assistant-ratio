@@ -38,6 +38,7 @@ def valid_poll_period(value: Any) -> float:
         return DEFAULT_BLE_POLL_PERIOD_S
     return number
 
+
 SERVICE_START_CHARGE = "start_charge"
 SERVICE_STOP_CHARGE = "stop_charge"
 SERVICE_SET_SCHEDULE = "set_schedule"

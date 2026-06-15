@@ -324,9 +324,7 @@ class RatioOptionsFlow(OptionsFlow):
         # disables a charger preserves the period they previously chose;
         # re-enabling later restores it instead of silently resetting to the
         # default.
-        self._periods = dict(
-            self.config_entry.options.get(CONF_BLE_POLL_PERIODS, {})
-        )
+        self._periods = dict(self.config_entry.options.get(CONF_BLE_POLL_PERIODS, {}))
         self._queue = list(serials)
         self._enabled = []
         return await self.async_step_charger()
@@ -357,9 +355,7 @@ class RatioOptionsFlow(OptionsFlow):
                         await coord.async_dismiss_bond_issue()
             # Persist only periods for serials walked this session; drop any
             # orphan keys for serials that were removed externally.
-            periods = {
-                s: p for s, p in self._periods.items() if s in self._all_serials
-            }
+            periods = {s: p for s, p in self._periods.items() if s in self._all_serials}
             return self.async_create_entry(
                 data={
                     **self.config_entry.options,
@@ -369,9 +365,7 @@ class RatioOptionsFlow(OptionsFlow):
             )
 
         self._current_serial = self._queue.pop(0)
-        existing = self._periods.get(
-            self._current_serial, DEFAULT_BLE_POLL_PERIOD_S
-        )
+        existing = self._periods.get(self._current_serial, DEFAULT_BLE_POLL_PERIOD_S)
         schema = vol.Schema(
             {
                 vol.Required(_FIELD_ENABLED, default=True): BooleanSelector(),
