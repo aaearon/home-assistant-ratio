@@ -271,6 +271,115 @@ async def test_options_flow_preserves_period_on_disable(
     assert _r(result2)["data"][CONF_BLE_POLL_PERIODS] == {serial: 1.5}
 
 
+@pytest.mark.asyncio
+async def test_options_flow_prunes_orphan_period_keys(
+    hass: HomeAssistant,
+) -> None:
+    """A saved period for a serial not in the enabled list is dropped on finalize."""
+    serial = "P12345678901234"
+    orphan = "P00000000000000"
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        unique_id="user@example.com",
+        options={
+            CONF_BLE_ENABLED_SERIALS: [serial],
+            CONF_BLE_POLL_PERIODS: {serial: 2.0, orphan: 5.0},
+        },
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.ratio.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    result2 = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={"enabled": True, "poll_period_s": 2.0},
+    )
+    await hass.async_block_till_done()
+
+    assert _r(result2)["type"] == FlowResultType.CREATE_ENTRY
+    assert _r(result2)["data"][CONF_BLE_POLL_PERIODS] == {serial: 2.0}
+    assert orphan not in _r(result2)["data"][CONF_BLE_POLL_PERIODS]
+
+
+@pytest.mark.asyncio
+async def test_options_flow_disable_with_blank_period(
+    hass: HomeAssistant,
+) -> None:
+    """Disabling a charger without supplying a period must not raise InvalidData."""
+    serial = "P12345678901234"
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        unique_id="user@example.com",
+        options={CONF_BLE_ENABLED_SERIALS: [serial]},
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.ratio.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    # Only toggle off; no poll_period_s provided.
+    result2 = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={"enabled": False},
+    )
+    await hass.async_block_till_done()
+
+    assert _r(result2)["type"] == FlowResultType.CREATE_ENTRY
+    assert _r(result2)["data"][CONF_BLE_ENABLED_SERIALS] == []
+
+
+@pytest.mark.asyncio
+async def test_options_flow_multi_charger_walkthrough(
+    hass: HomeAssistant,
+) -> None:
+    """Two serials are walked one form each; accumulation across chargers works."""
+    serial_a = "P11111111111111"
+    serial_b = "P22222222222222"
+
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={"email": "user@example.com", "password": "hunter2"},
+        unique_id="user@example.com",
+        options={CONF_BLE_ENABLED_SERIALS: [serial_a, serial_b]},
+    )
+    entry.add_to_hass(hass)
+
+    with patch("custom_components.ratio.async_setup_entry", return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+
+    # First charger form.
+    assert _r(result)["type"] == FlowResultType.FORM
+    assert _r(result)["step_id"] == "charger"
+    assert _r(result)["description_placeholders"] == {"serial": serial_a}
+
+    # Disable the first charger.
+    result2 = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        user_input={"enabled": False},
+    )
+
+    # Second charger form.
+    assert _r(result2)["type"] == FlowResultType.FORM
+    assert _r(result2)["step_id"] == "charger"
+    assert _r(result2)["description_placeholders"] == {"serial": serial_b}
+
+    # Keep the second charger enabled with a custom period.
+    result3 = await hass.config_entries.options.async_configure(
+        result2["flow_id"],
+        user_input={"enabled": True, "poll_period_s": 2.0},
+    )
+    await hass.async_block_till_done()
+
+    assert _r(result3)["type"] == FlowResultType.CREATE_ENTRY
+    assert _r(result3)["data"][CONF_BLE_ENABLED_SERIALS] == [serial_b]
+    assert _r(result3)["data"][CONF_BLE_POLL_PERIODS][serial_b] == 2.0
+
+
 @pytest.mark.parametrize("bad_period", [0.5, 60.5])
 @pytest.mark.asyncio
 async def test_options_flow_rejects_out_of_range_period(

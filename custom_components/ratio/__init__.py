@@ -25,6 +25,7 @@ from .const import (
     DEFAULT_BLE_POLL_PERIOD_S,
     DOMAIN,
     PLATFORMS,
+    valid_poll_period,
 )
 from .coordinator import RatioCoordinator, RatioHistoryCoordinator
 from .services import async_setup_services, async_unload_services
@@ -98,7 +99,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: RatioConfigEntry) -> boo
                 logger=_LOGGER,
                 address=address,
                 serial=serial,
-                poll_period_s=ble_poll_periods.get(serial, DEFAULT_BLE_POLL_PERIOD_S),
+                poll_period_s=valid_poll_period(
+                    ble_poll_periods.get(serial, DEFAULT_BLE_POLL_PERIOD_S)
+                ),
             )
             # async_start() subscribes to BT events; the returned cancel callback
             # is registered with async_on_unload so cleanup is automatic.

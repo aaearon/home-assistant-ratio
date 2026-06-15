@@ -57,16 +57,12 @@
   },
   "options": {
     "step": {
-      "init": {
-        "title": "Bluetooth Settings",
-        "description": "Adjust Bluetooth settings for each Ratio charger."
-      },
       "charger": {
         "title": "Ratio Charger {serial}",
         "description": "Uncheck Enable Bluetooth to disable BLE for this charger. Poll period controls how often BLE sensor values refresh; default 3 s matches the Ratio app.",
         "data": {
           "enabled": "Enable Bluetooth",
-          "poll_period_s": "BLE poll period (seconds, 1–60)"
+          "poll_period_s": "BLE poll period (seconds)"
         },
         "data_description": {
           "poll_period_s": "Lower values give faster sensor refresh on capable proxy setups; higher values reduce radio activity."
