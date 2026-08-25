@@ -55,6 +55,7 @@ ATTR_LICENSE_PLATE = "license_plate"
 ATTR_BEGIN_TIME = "begin_time"
 ATTR_END_TIME = "end_time"
 ATTR_SLOTS = "slots"
+ATTR_ENABLED = "enabled"
 
 PLATFORMS: list[str] = [
     "sensor",

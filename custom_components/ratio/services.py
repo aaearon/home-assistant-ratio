@@ -35,6 +35,7 @@ from homeassistant.util.json import JsonValueType
 
 from .const import (
     ATTR_BEGIN_TIME,
+    ATTR_ENABLED,
     ATTR_END_TIME,
     ATTR_LICENSE_PLATE,
     ATTR_SLOTS,
@@ -147,6 +148,12 @@ SET_SCHEDULE_SCHEMA = vol.Schema(
     {
         vol.Required("device_id"): vol.Any(cv.string, [cv.string]),
         vol.Required(ATTR_SLOTS): vol.All(cv.ensure_list, [SLOT_SCHEMA]),
+        # Defaults to True so existing automations keep activating the
+        # schedule, matching ``WeekPlanViewModel.java:99`` which hardcodes
+        # ``enabled = true`` on the app's own week-plan save. Passing False
+        # stores the times without arming them — otherwise nothing in the
+        # integration can ever deactivate a schedule.
+        vol.Optional(ATTR_ENABLED, default=True): cv.boolean,
     }
 )
 
@@ -397,7 +404,7 @@ async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
     # GET/merge/PUT — merging would carry a stored ``delayedStart`` alongside
     # the week schedule, and the two are mutually exclusive modes.
     schedule = ChargeScheduleUpdate(
-        enabled=True, schedule_type="WeekSchedule", slots=slots
+        enabled=call.data[ATTR_ENABLED], schedule_type="WeekSchedule", slots=slots
     )
     for entry_id, serial in _resolve_serials(hass, call):
         client, coordinator = _client_and_coordinator(hass, entry_id)
