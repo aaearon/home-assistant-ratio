@@ -142,17 +142,49 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
         ``upperLimit`` of 16 for the solar starting currents while the
         constant says 32 — so validating a write against them would accept
         values the cloud never would.
+
+        ``None`` also drives ``available``: an entity whose real bounds are
+        unknown cannot be written, so it must not present itself as writable.
         """
         lim = self._limit()
         if lim is None or lim.lower is None or lim.upper is None:
             return None
-        return lim.lower, lim.upper
+        lower, upper = lim.lower, lim.upper
+        # ``aioratio`` parses these with a bare ``float()``, which happily
+        # accepts ``"NaN"`` and ``"Infinity"``. A NaN bound is the dangerous
+        # one: every comparison against NaN is ``False``, so the range check
+        # below would pass *any* value. Reversed bounds cannot describe a real
+        # range either. Both are "unknown", not "authoritative".
+        if not math.isfinite(lower) or not math.isfinite(upper):
+            return None
+        if lower > upper:
+            return None
+        return lower, upper
 
     # ---- properties ----
 
     @property
     def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return super().available and self._settings() is not None
+        """Available only while the charger's own bounds are known.
+
+        ``_validate()`` refuses every write without them, but HA's
+        ``number.set_value`` handler range-checks and clamps against
+        ``native_min_value``/``native_max_value`` *first*. Those fall back to
+        the display constants, so a still-"available" entity answered the same
+        unwritable state with two different errors depending on which side of
+        a fictional range the request landed: HA's generic ``out_of_range``
+        outside it, our ``number_bounds_unknown`` inside it. Unavailable
+        entities are filtered out of entity service calls entirely, which is
+        both consistent and the truth.
+
+        ``_bounds()`` subsumes the previous ``_settings() is not None`` check:
+        no settings document means no descriptor means no bounds. It does not
+        introduce a startup flap either — the platform adds nothing until
+        ``coordinator.data`` exists, and the coordinator gathers chargers and
+        their settings in the same refresh, so an entity's first state already
+        has its bounds.
+        """
+        return super().available and self._bounds() is not None
 
     @property
     def native_value(self) -> float | None:  # pyright: ignore[reportIncompatibleVariableOverride]
@@ -161,19 +193,34 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
             return None
         return lim.value
 
+    @staticmethod
+    def _display_bound(reported: float | None, fallback: float) -> float:
+        """Pick a renderable float for the frontend slider.
+
+        HA writes ``native_min_value``/``native_max_value`` into the state
+        machine as the ``min``/``max`` attributes even while the entity is
+        unavailable, and a ``NaN`` or ``inf`` there is not representable in
+        JSON. A non-finite reported bound is therefore replaced by the display
+        constant — which is display scaffolding either way, and never reaches
+        ``_validate()``.
+        """
+        if reported is not None and math.isfinite(reported):
+            return reported
+        return fallback
+
     @property
     def native_min_value(self) -> float:  # pyright: ignore[reportIncompatibleVariableOverride]
         lim = self._limit()
-        if lim is not None and lim.lower is not None:
-            return lim.lower
-        return self._default_min
+        return self._display_bound(
+            None if lim is None else lim.lower, self._default_min
+        )
 
     @property
     def native_max_value(self) -> float:  # pyright: ignore[reportIncompatibleVariableOverride]
         lim = self._limit()
-        if lim is not None and lim.upper is not None:
-            return lim.upper
-        return self._default_max
+        return self._display_bound(
+            None if lim is None else lim.upper, self._default_max
+        )
 
     # ---- writes ----
 

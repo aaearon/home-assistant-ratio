@@ -279,6 +279,15 @@ charger reports `upperLimit` 16 where the constant says 32). Writes validate
 against `_bounds()`, which returns the charger's own `lowerLimit`/`upperLimit`
 or `None`, and a `None` refuses the write with `number_bounds_unknown`.
 
+`_bounds()` returns `None` unless both limits are finite and `lower <= upper`;
+`"NaN"` parses to a float, and a `NaN` bound would make every range comparison
+false and wave any value through. `lower == upper` is legitimate (a charger
+pinned to one value). A `None` also makes the entity **unavailable** — Home
+Assistant's `number.set_value` handler range-checks and clamps against the
+display fallbacks before the integration sees the call, so leaving an
+unwritable entity available produced two different errors for the same state
+depending on where the requested value fell.
+
 ## Notes for contributors
 
 The integration is intentionally a thin shell over [`aioratio`](https://github.com/aaearon/aioratio). If you find yourself reaching for `boto3`, `warrant`, or HTTP code inside this repo, that work belongs in the library, not here.

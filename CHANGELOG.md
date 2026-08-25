@@ -36,6 +36,20 @@ All notable changes to this project will be documented in this file.
   bound is missing. Finiteness and integrality remain unconditional.
   `native_min_value` / `native_max_value` keep the fallbacks for frontend
   rendering only.
+- **Number entities go unavailable when the charger's bounds are unknown.**
+  They previously stayed available and advertised the display fallbacks as
+  `min` / `max`, so `number.set_value` answered the same unwritable state with
+  two different errors: Home Assistant's own `out_of_range` for a value outside
+  the fallback (its handler range-checks and clamps before the integration is
+  reached) and `number_bounds_unknown` for one inside it. Entities without both
+  charger bounds are now unavailable, so the write is refused consistently.
+- **Malformed charger bounds are treated as unknown, not authoritative.** A
+  `NaN` upper limit disabled range checking altogether — every comparison
+  against `NaN` is false, so any value passed and was sent to the cloud.
+  Non-finite (`NaN`, `±inf`) and reversed (`lowerLimit` > `upperLimit`) bounds
+  now count as unknown, and non-finite values no longer leak into the entity's
+  `min` / `max` state attributes. Equal bounds (a charger pinned to a single
+  legal value) remain valid.
 
 - BLE poll period read from options is now validated on setup: a corrupt or
   hand-edited stored value (None, non-numeric, zero, negative, or out of the
