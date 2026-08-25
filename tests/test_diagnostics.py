@@ -199,3 +199,77 @@ async def test_diagnostics_redacts_new_sensitive_fields(
     # cpms url should be redacted
     cpms = coord_data["cpms_options"][0][0]
     assert cpms["url"] == "**REDACTED**"
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_keeps_nested_get_descriptors(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+) -> None:
+    """Diagnostics serialises the GET models, not the PUT bodies.
+
+    ``diagnostics.py`` uses ``dataclasses.asdict()`` rather than
+    ``to_dict()``, so aioratio 0.12.0 flattening the PUT payloads must leave
+    this output untouched: the nested ``value``/``lower``/``upper``/``raw``
+    descriptor stays visible for troubleshooting.
+    """
+    from aioratio.models import SolarSettings, UserSettings
+    from aioratio.models.settings import UpperLowerLimitSetting
+
+    entry = setup_integration
+    coordinator = entry.runtime_data.coordinator
+    coordinator.async_set_updated_data(
+        RatioData(
+            chargers={SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})},
+            user_settings={
+                SERIAL: UserSettings(
+                    maximum_charging_current=UpperLowerLimitSetting.from_dict(
+                        {"value": 16, "lowerLimit": 6, "upperLimit": 32}
+                    )
+                )
+            },
+            solar_settings={
+                SERIAL: SolarSettings(
+                    sun_on_delay_minutes=UpperLowerLimitSetting.from_dict(
+                        {"value": 2, "lowerLimit": 0, "upperLimit": 10}
+                    )
+                )
+            },
+        )
+    )
+    await hass.async_block_till_done()
+
+    coord_data = (await async_get_config_entry_diagnostics(hass, entry))[
+        "coordinator_data"
+    ]
+    user = coord_data["user_settings"][0]
+    assert user["maximum_charging_current"] == {
+        "value": 16.0,
+        "lower": 6.0,
+        "upper": 32.0,
+        "raw": {"value": 16, "lowerLimit": 6, "upperLimit": 32},
+    }
+    solar = coord_data["solar_settings"][0]
+    assert solar["sun_on_delay_minutes"]["value"] == 2.0
+    assert solar["sun_on_delay_minutes"]["raw"]["upperLimit"] == 10
+
+
+def test_put_bodies_stay_flat_and_sparse() -> None:
+    """The other direction of the same invariant.
+
+    Diagnostics keeps the GET descriptors; the write path must not. Pinning
+    both here makes an accidental re-wrapping in either direction fail.
+    """
+    from aioratio.models import (
+        OcppSettingsUpdate,
+        SolarSettingsUpdate,
+        UserSettingsUpdate,
+    )
+
+    assert UserSettingsUpdate(maximum_charging_current=16).to_dict() == {
+        "maximumChargingCurrent": 16
+    }
+    assert SolarSettingsUpdate(sun_on_delay_minutes=2).to_dict() == {
+        "sunOnDelayMinutes": 2
+    }
+    assert OcppSettingsUpdate(enabled=True).to_dict() == {"enabled": True}

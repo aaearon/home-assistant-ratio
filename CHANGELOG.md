@@ -6,6 +6,27 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Settings writes now send only the key that changed.** Changing maximum or
+  minimum charging current failed with `HTTP 400 ... "cableSettings" ... is out
+  of range` because the integration rewrote the whole cached settings document,
+  in the GET descriptor shape, on every one-field change. The six number
+  entities and the three OCPP writers (CPMS select, OCPP switch, charge point
+  identifier text) now emit a sparse, flat one-key body via the `*Update` DTOs
+  added in `aioratio` 0.12.0. (#61, #62)
+- **`ratio.set_schedule` no longer sends non-sparse defaults.** It sent
+  `randomizedTimeOffsetEnabled: false` on every call and omitted the
+  `scheduleType` discriminator. It now sends exactly `enabled`,
+  `scheduleType: "WeekSchedule"` and `weekSchedule`, mirroring the app's
+  week-plan screen. Under `aioratio` 0.12.0 the previous call would have raised
+  `TypeError`. (#63)
+- **`number.set_value` validates its input.** Non-finite (`NaN`, `±inf`) and
+  fractional values are refused with a translated `HomeAssistantError` instead
+  of an unhandled traceback, and values outside the setting's `lowerLimit` /
+  `upperLimit` are refused rather than forwarded to the cloud — they are never
+  silently clamped. Validation no longer depends on the coordinator cache being
+  populated; previously an empty cache let a float reach the wire, violating the
+  `Int?` serializer contract. (#64)
+
 - BLE poll period read from options is now validated on setup: a corrupt or
   hand-edited stored value (None, non-numeric, zero, negative, or out of the
   1–60 s range) falls back to the 3 s default instead of busy-looping or
@@ -19,6 +40,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Requires `aioratio` 0.12.0 (was 0.11.0). The pin is bumped in
+  `custom_components/ratio/manifest.json` and both `pip install` lines in
+  `.github/workflows/ci.yaml`.
 - The BLE poll-period field in the options flow now uses Home Assistant's
   number/boolean selectors (`NumberSelector`/`BooleanSelector`), making
   `const.py` the single source of the 1–60 s bounds.

@@ -244,7 +244,24 @@ mocked `RatioClient`. Coordinator tests call
 `async_config_entry_first_refresh()` / `async_refresh()` (not the private
 `_async_update_data()`). Time-dependent tests use the `freezer` fixture.
 
-Bumping the library: land changes in [`aioratio`](https://github.com/aaearon/aioratio), tag a release; then bump the `requirements` pin and `version` in `custom_components/ratio/manifest.json`. The pin is `==`, matching HA Core convention.
+Bumping the library: land changes in [`aioratio`](https://github.com/aaearon/aioratio), publish the release to PyPI, then bump the pin in **three** places — missing the CI ones makes CI install the old library while the code imports the new types, which fails at import, not subtly:
+
+1. `custom_components/ratio/manifest.json` — the `requirements` entry (`aioratio[ble]==X.Y.Z`).
+2. `.github/workflows/ci.yaml` — the `mypy` job's `pip install` line.
+3. `.github/workflows/ci.yaml` — the `pytest` job's `pip install` line.
+
+The pin is `==`, matching HA Core convention. The integration's own `version` in `manifest.json` is bumped separately, as part of cutting an integration release. `pyproject.toml` holds only tool configuration — there is no dependency there to bump.
+
+### Cloud write contract
+
+The Ratio cloud API is asymmetric. GET returns descriptor objects
+(`{"value": 16, "lowerLimit": 6, "upperLimit": 32}`); PUT takes bare
+serializer-native values, sparse at the top level — the app sends only the keys
+the current screen changed. Write paths therefore use the `*Update` DTOs
+(`UserSettingsUpdate`, `SolarSettingsUpdate`, `OcppSettingsUpdate`,
+`ChargeScheduleUpdate`) and never write a GET model back. Every write test
+asserts the exact body, and its keys come from the matching
+`$$serializer.java` in the decompiled app, never from recollection.
 
 ## Notes for contributors
 
