@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-08-25
+
 ### Added
 
 - **`select.<charger>_start_mode` exposes the charger's start mode.** The
