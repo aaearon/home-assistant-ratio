@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Documented a Ratio cloud defect that makes `select.<charger>_start_mode`
+  look broken.** A `startMode` write is accepted and persists, but no
+  subsequent `GET` reflects it until some other `userSettings` key is written.
+  Measured directly: 60 s of forced refreshes returned the old value, and one
+  write to `cable_settings` revealed it at once. The vendor's own app has the
+  same defect, so this is not something the integration can fix — there is no
+  read that returns the truth. The entity deliberately does not fake the value,
+  so a write the cloud genuinely rejects still surfaces as a failure. (#80)
+
 ## [0.15.0] — 2026-08-25
 
 ### Added
