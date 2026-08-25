@@ -70,6 +70,8 @@ async def async_setup_entry(
         entities: list[SelectEntity] = []
         for serial in new:
             entities.append(RatioChargeModeSelect(coordinator, client, serial))
+            entities.append(RatioStartModeSelect(coordinator, client, serial))
+            entities.append(RatioCableSettingsSelect(coordinator, client, serial))
             entities.append(RatioActiveVehicleSelect(coordinator, client, serial))
             entities.append(RatioCpmsSelect(coordinator, client, serial))
         known.update(new)
@@ -173,6 +175,141 @@ class RatioChargeModeSelect(_RatioSelectBase):
             self._client.set_user_settings,
             self._serial,
             {"chargingMode": option},
+        )
+
+
+class RatioStartModeSelect(_RatioSelectBase):
+    """Select for the start mode (``Auto`` vs ``Manual``).
+
+    Deliberately not folded into a shared parameterised class with
+    :class:`RatioChargeModeSelect`: that one carries a hardcoded option
+    fallback for a cloud that sometimes omits ``allowedValues``, and we have
+    no evidence the same omission — or the same fallback list — applies here.
+    """
+
+    _attr_translation_key = "start_mode"
+    _attr_name = "Start mode"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: RatioCoordinator,
+        client: RatioClient,
+        serial: str,
+    ) -> None:
+        super().__init__(coordinator, client, serial, "start_mode")
+
+    @property
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        """Unavailable only on an explicit ``isChangeAllowed: false``.
+
+        ``EnumDataClass$$serializer.java``:36-38 declares ``isChangeAllowed``
+        required, so a charger that locks the setting says so on every GET. A
+        *missing* settings document is not such a statement; only an explicit
+        ``False`` blocks, matching :class:`RatioChargeModeSelect`.
+        """
+        if not super().available or self.coordinator.data is None:
+            return False
+        settings = self.coordinator.data.user_settings.get(self._serial)
+        if settings is None or settings.start_mode is None:
+            return True
+        return settings.start_mode.is_change_allowed
+
+    @property
+    def options(self) -> list[str]:  # pyright: ignore[reportIncompatibleVariableOverride]
+        """The charger's reported ``allowedValues``, verbatim and in order.
+
+        No fallback list: the live charger reports ``[Manual, Auto]``, the
+        reverse of the ``StartMode.java`` enum ordinals, so ordinals are not a
+        safe source. An empty list is honest about knowing nothing.
+        """
+        if self.coordinator.data is None:
+            return []
+        settings = self.coordinator.data.user_settings.get(self._serial)
+        if settings is None or settings.start_mode is None:
+            return []
+        return list(settings.start_mode.allowed_values)
+
+    @property
+    def current_option(self) -> str | None:  # pyright: ignore[reportIncompatibleVariableOverride]
+        if self.coordinator.data is None:
+            return None
+        settings = self.coordinator.data.user_settings.get(self._serial)
+        if settings is None or settings.start_mode is None:
+            return None
+        return settings.start_mode.value
+
+    async def async_select_option(self, option: str) -> None:
+        # Sparse PUT: ``SetUserSettings$$serializer.java``:42 names the key
+        # ``startMode`` and declares every element optional, so sending the
+        # whole cached document would reassert values this entity does not own.
+        await self.coordinator.request_command(
+            self._client.set_user_settings,
+            self._serial,
+            {"startMode": option},
+        )
+
+
+class RatioCableSettingsSelect(_RatioSelectBase):
+    """Select for the cable-lock behaviour.
+
+    The effect of each option — ``LockAlways`` in particular — is
+    uncharacterised; they are exposed because the charger reports them as
+    allowed, not because their behaviour has been verified.
+    """
+
+    _attr_translation_key = "cable_settings"
+    _attr_name = "Cable settings"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self,
+        coordinator: RatioCoordinator,
+        client: RatioClient,
+        serial: str,
+    ) -> None:
+        super().__init__(coordinator, client, serial, "cable_settings")
+
+    @property
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        """Unavailable only on an explicit ``isChangeAllowed: false``."""
+        if not super().available or self.coordinator.data is None:
+            return False
+        settings = self.coordinator.data.user_settings.get(self._serial)
+        if settings is None or settings.cable_settings is None:
+            return True
+        return settings.cable_settings.is_change_allowed
+
+    @property
+    def options(self) -> list[str]:  # pyright: ignore[reportIncompatibleVariableOverride]
+        """The charger's reported ``allowedValues``, verbatim and in order.
+
+        No fallback list: we have observed exactly one charger, and offering
+        an unverified option would invite a write the charger may reject.
+        """
+        if self.coordinator.data is None:
+            return []
+        settings = self.coordinator.data.user_settings.get(self._serial)
+        if settings is None or settings.cable_settings is None:
+            return []
+        return list(settings.cable_settings.allowed_values)
+
+    @property
+    def current_option(self) -> str | None:  # pyright: ignore[reportIncompatibleVariableOverride]
+        if self.coordinator.data is None:
+            return None
+        settings = self.coordinator.data.user_settings.get(self._serial)
+        if settings is None or settings.cable_settings is None:
+            return None
+        return settings.cable_settings.value
+
+    async def async_select_option(self, option: str) -> None:
+        # Sparse PUT: ``SetUserSettings$$serializer.java``:43 names the key
+        # ``cableSettings``, typed ``String?`` and optional.
+        await self.coordinator.request_command(
+            self._client.set_user_settings,
+            self._serial,
+            {"cableSettings": option},
         )
 
 

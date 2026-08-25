@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`select.<charger>_start_mode` exposes the charger's start mode.** The
+  `startMode` user setting (`Auto` / `Manual`) was read by the coordinator but
+  had no entity, so it could only be changed from the Ratio app. The select
+  writes a sparse single-key PUT on `startMode`
+  (`SetUserSettings$$serializer.java`:42) and is gated on the setting's own
+  `isChangeAllowed`, like `select.charge_mode`. Options come from the
+  charger's reported `allowedValues` with no fallback list — the live charger
+  reports `[Manual, Auto]`, the reverse of the `StartMode.java` enum ordinals,
+  so ordinals are not a safe source. What `Manual` actually changes is not
+  characterised; it is offered because the charger reports it as allowed. (#65)
+- **`select.<charger>_cable_settings` exposes the cable-lock behaviour.** The
+  `cableSettings` user setting (`LockWhenCarConnected` / `LockAutomatically` /
+  `LockAlways`) was likewise read but unexposed. Same shape as above: sparse
+  single-key PUT on `cableSettings`
+  (`SetUserSettings$$serializer.java`:43), `isChangeAllowed` gate, options
+  straight from `allowedValues` with no fallback. The effect of each option —
+  `LockAlways` in particular — is uncharacterised and has not been verified on
+  a live charger. (#76)
+
 ## [0.14.1] — 2026-08-25
 
 ### Fixed

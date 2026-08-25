@@ -34,7 +34,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.ratio.const import DOMAIN
 from custom_components.ratio.coordinator import RatioData
 from custom_components.ratio.number import RatioMaximumChargingCurrentNumber
-from custom_components.ratio.select import RatioCpmsSelect
+from custom_components.ratio.select import (
+    RatioCableSettingsSelect,
+    RatioCpmsSelect,
+    RatioStartModeSelect,
+)
 from custom_components.ratio.switch import RatioOcppEnabledSwitch
 
 SERIAL = "SN-CONTRACT"
@@ -244,6 +248,77 @@ async def test_cpms_select_write_reaches_the_transport(
         transport.calls[0],
         kind="installerOcpp",
         inner={"cpms": {"centralSystem": "Op A", "url": "ws://a.com"}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_start_mode_select_write_reaches_the_transport(
+    real_client: tuple[RatioClient, RecordingTransport],
+) -> None:
+    """Sparse ``SetUserSettings``: only ``startMode``, under ``?id=user``.
+
+    ``SetUserSettings$$serializer.java``:42 names the wire key ``startMode``
+    and marks it optional, so the body must carry that key and nothing else.
+    """
+    from aioratio.models import UserSettings
+    from aioratio.models.settings import EnumValue
+
+    client, transport = real_client
+    coord = _passthrough_coordinator(
+        RatioData(
+            user_settings={
+                SERIAL: UserSettings(
+                    start_mode=EnumValue(
+                        value="Auto", allowed_values=["Manual", "Auto"]
+                    )
+                )
+            }
+        )
+    )
+
+    entity = RatioStartModeSelect(coord, client, SERIAL)
+    await entity.async_select_option("Manual")
+
+    _assert_settings_envelope(
+        transport.calls[0], kind="user", inner={"startMode": "Manual"}
+    )
+
+
+@pytest.mark.asyncio
+async def test_cable_settings_select_write_reaches_the_transport(
+    real_client: tuple[RatioClient, RecordingTransport],
+) -> None:
+    """Sparse ``SetUserSettings``: only ``cableSettings``, under ``?id=user``.
+
+    ``SetUserSettings$$serializer.java``:43 names the wire key
+    ``cableSettings`` and types it ``String?``.
+    """
+    from aioratio.models import UserSettings
+    from aioratio.models.settings import EnumValue
+
+    client, transport = real_client
+    coord = _passthrough_coordinator(
+        RatioData(
+            user_settings={
+                SERIAL: UserSettings(
+                    cable_settings=EnumValue(
+                        value="LockWhenCarConnected",
+                        allowed_values=[
+                            "LockWhenCarConnected",
+                            "LockAutomatically",
+                            "LockAlways",
+                        ],
+                    )
+                )
+            }
+        )
+    )
+
+    entity = RatioCableSettingsSelect(coord, client, SERIAL)
+    await entity.async_select_option("LockAlways")
+
+    _assert_settings_envelope(
+        transport.calls[0], kind="user", inner={"cableSettings": "LockAlways"}
     )
 
 

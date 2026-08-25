@@ -47,6 +47,12 @@
       "charge_mode": {
         "default": "mdi:cog"
       },
+      "start_mode": {
+        "default": "mdi:play-box-outline"
+      },
+      "cable_settings": {
+        "default": "mdi:lock-outline"
+      },
       "active_vehicle": {
         "default": "mdi:car-connected"
       },
