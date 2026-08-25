@@ -10,6 +10,7 @@ from aioratio.models import (
     CpmsConfig,
     InstallerOcppSettings,
     OcppFieldStatus,
+    OcppSettingsUpdate,
 )
 
 from custom_components.ratio.coordinator import RatioData
@@ -102,25 +103,28 @@ def test_ocpp_switch_extra_attrs_when_not_allowed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ocpp_switch_turn_on_calls_set_ocpp() -> None:
+async def test_ocpp_switch_turn_on_sends_only_enabled() -> None:
+    """``SetInstallerOcppSettings`` is sparse: send only the toggled key."""
     coord = _coord(_make_ocpp(enabled=False))
     client = MagicMock()
     sw = RatioOcppEnabledSwitch(coord, client, SERIAL)
     await sw.async_turn_on()
     coord.request_command.assert_awaited_once()
-    _, settings = coord.request_command.call_args[0][1:]
-    assert settings.enabled is True
+    _, update = coord.request_command.call_args[0][1:]
+    assert isinstance(update, OcppSettingsUpdate)
+    assert update.to_dict() == {"enabled": True}
 
 
 @pytest.mark.asyncio
-async def test_ocpp_switch_turn_off_calls_set_ocpp() -> None:
+async def test_ocpp_switch_turn_off_sends_only_enabled() -> None:
     coord = _coord(_make_ocpp(enabled=True))
     client = MagicMock()
     sw = RatioOcppEnabledSwitch(coord, client, SERIAL)
     await sw.async_turn_off()
     coord.request_command.assert_awaited_once()
-    _, settings = coord.request_command.call_args[0][1:]
-    assert settings.enabled is False
+    _, update = coord.request_command.call_args[0][1:]
+    assert isinstance(update, OcppSettingsUpdate)
+    assert update.to_dict() == {"enabled": False}
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +172,7 @@ def test_cpms_select_falls_back_to_current_cpms_if_no_list() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cpms_select_calls_set_ocpp_with_selected_url() -> None:
+async def test_cpms_select_sends_only_cpms() -> None:
     opts = [
         CpmsConfig(central_system="Op A", url="ws://a.com"),
         CpmsConfig(central_system="Op B", url="ws://b.com"),
@@ -177,9 +181,9 @@ async def test_cpms_select_calls_set_ocpp_with_selected_url() -> None:
     sel = _cpms_select(coord)
     await sel.async_select_option("Op A")
     coord.request_command.assert_awaited_once()
-    _, settings = coord.request_command.call_args[0][1:]
-    assert settings.cpms is not None
-    assert settings.cpms.url == "ws://a.com"
+    _, update = coord.request_command.call_args[0][1:]
+    assert isinstance(update, OcppSettingsUpdate)
+    assert update.to_dict() == {"cpms": {"centralSystem": "Op A", "url": "ws://a.com"}}
 
 
 # ---------------------------------------------------------------------------
@@ -232,10 +236,11 @@ def test_cpid_text_extra_attrs_when_not_allowed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cpid_text_set_value_calls_set_ocpp() -> None:
+async def test_cpid_text_set_value_sends_only_the_identifier() -> None:
     coord = _coord(_make_ocpp(cpid="OLD"))
     text = _cpid_text(coord)
     await text.async_set_value("NEW-CP")
     coord.request_command.assert_awaited_once()
-    _, settings = coord.request_command.call_args[0][1:]
-    assert settings.charge_point_identifier == "NEW-CP"
+    _, update = coord.request_command.call_args[0][1:]
+    assert isinstance(update, OcppSettingsUpdate)
+    assert update.to_dict() == {"chargePointIdentifier": "NEW-CP"}

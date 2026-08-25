@@ -13,11 +13,14 @@ from __future__ import annotations
 # break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
 # the same dynamic-property pattern. The variance error is structurally
 # unavoidable from this side of the HA boundary.
-import dataclasses
 from typing import Any
 
 from aioratio import RatioClient
-from aioratio.models import ChargerOverview, InstallerOcppSettings
+from aioratio.models import (
+    ChargerOverview,
+    InstallerOcppSettings,
+    OcppSettingsUpdate,
+)
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -215,17 +218,15 @@ class RatioOcppEnabledSwitch(CoordinatorEntity[RatioCoordinator], SwitchEntity):
         return settings.enabled
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        settings = self._ocpp_settings() or InstallerOcppSettings()
-        await self.coordinator.request_command(
-            self._client.set_ocpp_settings,
-            self._serial,
-            dataclasses.replace(settings, enabled=True),
-        )
+        await self._set_enabled(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        settings = self._ocpp_settings() or InstallerOcppSettings()
+        await self._set_enabled(False)
+
+    async def _set_enabled(self, enabled: bool) -> None:
+        """PUT only ``enabled`` (``SetInstallerOcppSettings$$serializer``)."""
         await self.coordinator.request_command(
             self._client.set_ocpp_settings,
             self._serial,
-            dataclasses.replace(settings, enabled=False),
+            OcppSettingsUpdate(enabled=enabled),
         )
