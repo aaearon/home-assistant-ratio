@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Settings written from HA no longer show a stale value for up to a minute.**
+  Every command scheduled an immediate refresh, but the Ratio cloud needs ~3-6 s
+  to make a PUT visible to a subsequent GET, so that refresh cached pre-write
+  values and nothing read again until the next 60 s poll. A command now arms a
+  one-shot settle timer (`POST_WRITE_SETTLE_SECONDS`, 10 s) instead, re-armed
+  from the latest write and immune to being cancelled by an ordinary poll, so
+  the single refresh it already performed lands after the write has propagated.
+  This also surfaces the cloud's server-side cascade from
+  `maximumChargingCurrent` onto `smartSolarStartingCurrent` within ~10 s instead
+  of ~60 s. Cost: confirmed feedback for a write now takes ~10 s instead of
+  appearing instantly with the wrong value. (#69)
+- **The CPMS select no longer offers an option that cannot be written.** An
+  options-list entry missing `centralSystem` or `url` was offered (labelled with
+  whichever field was present), and selecting it raised an unhandled
+  `ValueError` from DTO serialisation — `ConfiguredCpms$$serializer.java`
+  declares both fields required and non-nullable. Such entries are now filtered
+  out. An empty-string `centralSystem` remains selectable; only `None` is
+  rejected. (#70)
+
 ## [0.14.0] — 2026-08-25
 
 ### Added

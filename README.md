@@ -187,6 +187,7 @@ Replace `<serial>` with your charger's serial number (lowercase); find actual en
 - **Password storage**: stored in HA config entry data and persisted in `.storage/core.config_entries` like other config entry data. It does not use `secrets.yaml`, and protection relies on Home Assistant host security rather than separate encryption in this integration.
 - **Account-level services require a single config entry.** `add_vehicle`, `remove_vehicle`, and `import_session_history` raise an error if multiple Ratio config entries exist, since they operate on the account level and there is no device picker to disambiguate.
 - **Rate limiting**: The Ratio cloud API enforces rate limits. The integration handles 429 responses with automatic backoff, but aggressive polling or frequent command calls may trigger temporary throttling.
+- **Changing the maximum charging current can silently lower the smart-solar starting current.** In one observed case, a `maximumChargingCurrent` write of 16 → 15 A also rewrote `smartSolarStartingCurrent` from 16 to 15 A server-side, and restoring the maximum to 16 A did **not** restore it. The cascade happens in the Ratio cloud and cannot be prevented from HA. This is a single observation — the clamping rule (which values trigger it, and how the new value is derived) is not characterised. If you rely on a specific smart-solar starting current, write it explicitly after changing the maximum charging current.
 - **DSO power reduction is read-only.** The `power_reduced_by_dso` binary sensor reflects whether the Distribution System Operator has reduced available power, but this cannot be controlled from HA — it is set by the DSO via the charger's smart grid interface.
 - **`import_session_history` rejects already-processed windows.** If `begin_time` predates the history-import baseline (latest imported session timestamp, advanced by the live polling coordinator) for any charger, the service raises `ServiceValidationError`. This prevents non-monotonic energy statistics that would result from backfilling sessions earlier than the baseline. Workaround: re-add the integration to reset the baseline before backfilling.
 
@@ -206,6 +207,7 @@ Replace `<serial>` with your charger's serial number (lowercase); find actual en
 - Entities showing "unavailable": the charger may be offline or the Ratio cloud may be unreachable. Check your charger's internet connection.
 - Settings not updating: the integration polls every 60 seconds. If you changed a setting via the Ratio app, wait up to a minute for HA to reflect it.
 - After a restart, entities may briefly show "unknown" until the first poll completes.
+- Settings changed **from Home Assistant** take about 10 seconds to show their confirmed value. The cloud needs a few seconds to make a write visible to a subsequent read, so the post-write refresh is deliberately deferred (`POST_WRITE_SETTLE_SECONDS`) rather than reading back stale data.
 
 ### Rate limiting
 
@@ -287,6 +289,35 @@ Assistant's `number.set_value` handler range-checks and clamps against the
 display fallbacks before the integration sees the call, so leaving an
 unwritable entity available produced two different errors for the same state
 depending on where the requested value fell.
+
+Writes are not immediately readable. A PUT takes roughly 3-6 seconds to become
+visible to a subsequent GET, so a command does not refresh inline; it arms a
+one-shot settle timer (`POST_WRITE_SETTLE_SECONDS`, 10 s) and returns. An
+inline refresh lands inside the propagation window, caches the pre-write
+values, and leaves them on screen until the next 60 s poll.
+
+The settle timer is deliberately **not** HA's request-refresh debouncer, which
+fails this job in two independent ways. Non-immediate, it anchors its timer to
+the *first* call of a burst — `Debouncer._async_schedule_or_call_now` only
+flips `_execute_at_end_of_timer` when a timer already exists and never
+reschedules — so writes at t=0 and t=9 would refresh at t=10, one second after
+the second write. And `DataUpdateCoordinator._async_refresh` calls
+`self._debounced_refresh.async_cancel()`, so any ordinary 60 s poll landing
+inside the settle window would swallow the confirming read entirely. The
+dedicated one-shot re-arms from the latest write and cannot be consumed by a
+poll; it still delegates to `async_request_refresh()` so the debouncer's
+execute lock keeps serialising refreshes. It is cancelled on entry unload
+(`async_shutdown`, which the coordinator registers via
+`config_entry.async_on_unload`) so it can never fire through a closed client.
+
+The cloud also applies its own cross-document cascades: lowering
+`userSettings.maximumChargingCurrent` was observed to lower
+`solarSettings.smartSolarStartingCurrent` to match, one-directionally — raising
+the maximum again did not restore it. Nothing is sent for the second document;
+the server rewrites it. This is why the post-write refresh must re-read *all*
+settings documents rather than only the one written, and why no optimistic
+state is set for the cascaded value: the clamping rule is uncharacterised, so
+any predicted value would be a guess.
 
 ## Notes for contributors
 

@@ -244,3 +244,73 @@ async def test_cpid_text_set_value_sends_only_the_identifier() -> None:
     _, update = coord.request_command.call_args[0][1:]
     assert isinstance(update, OcppSettingsUpdate)
     assert update.to_dict() == {"chargePointIdentifier": "NEW-CP"}
+
+
+# ---------------------------------------------------------------------------
+# CPMS select — unwritable options (issue #70)
+# ---------------------------------------------------------------------------
+
+
+def test_cpms_select_omits_option_without_central_system() -> None:
+    """A URL-only option cannot be serialised, so it must not be offered.
+
+    ``CpmsConfig.to_dict`` raises ``ValueError`` when either ``centralSystem``
+    or ``url`` is ``None`` (``ConfiguredCpms$$serializer.java``:40-47 declares
+    both required and non-nullable). Offering such an entry lets a user pick an
+    option whose write path raises an unhandled exception.
+    """
+    opts = [
+        CpmsConfig(central_system="Op A", url="ws://a.com"),
+        CpmsConfig(url="ws://orphan.com"),
+    ]
+    coord = _coord(_make_ocpp(cpms_url="ws://a.com"), cpms_opts=opts)
+    sel = _cpms_select(coord)
+    assert sel.options == ["Op A"]
+
+
+def test_cpms_select_omits_option_without_url() -> None:
+    opts = [
+        CpmsConfig(central_system="Op A", url="ws://a.com"),
+        CpmsConfig(central_system="Op B"),
+    ]
+    coord = _coord(_make_ocpp(cpms_url="ws://a.com"), cpms_opts=opts)
+    sel = _cpms_select(coord)
+    assert sel.options == ["Op A"]
+
+
+def test_cpms_select_keeps_option_with_empty_central_system() -> None:
+    """Empty string is serialisable — only ``None`` is rejected."""
+    opts = [
+        CpmsConfig(central_system="Op A", url="ws://a.com"),
+        CpmsConfig(central_system="", url="ws://b.com"),
+    ]
+    coord = _coord(_make_ocpp(cpms_url="ws://a.com"), cpms_opts=opts)
+    sel = _cpms_select(coord)
+    assert len(sel.options) == 2
+    assert CpmsConfig(central_system="", url="ws://b.com").to_dict() == {
+        "centralSystem": "",
+        "url": "ws://b.com",
+    }
+
+
+def test_cpms_select_state_none_when_configured_cpms_incomplete() -> None:
+    """An incomplete configured CPMS yields no state rather than a bad option."""
+    ocpp = _make_ocpp()
+    ocpp.cpms = CpmsConfig(url="ws://orphan.com")
+    coord = _coord(ocpp)  # no options list -> falls back to the configured CPMS
+    sel = _cpms_select(coord)
+    assert sel.options == []
+    assert sel.state is None
+
+
+@pytest.mark.asyncio
+async def test_cpms_select_unwritable_option_is_not_selectable() -> None:
+    """Selecting the label of a filtered-out option must not raise."""
+    opts = [
+        CpmsConfig(central_system="Op A", url="ws://a.com"),
+        CpmsConfig(url="ws://orphan.com"),
+    ]
+    coord = _coord(_make_ocpp(cpms_url="ws://a.com"), cpms_opts=opts)
+    sel = _cpms_select(coord)
+    await sel.async_select_option("ws://orphan.com")
+    coord.request_command.assert_not_awaited()
