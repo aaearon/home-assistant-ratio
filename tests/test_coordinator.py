@@ -493,3 +493,26 @@ async def test_cpms_backoff_not_started_on_rate_limit(
 
     # The CPMS backoff timestamp must not have been written.
     assert coord._cpms_last_fetch is None
+
+
+@pytest.mark.asyncio
+async def test_coordinator_uses_non_immediate_post_write_debouncer(
+    hass: HomeAssistant,
+) -> None:
+    """Post-write refreshes must be delayed past the cloud's propagation lag.
+
+    ``request_command`` ends with ``async_request_refresh()``. With HA's
+    default ``immediate=True`` debouncer that GET runs synchronously, inside
+    the ~3-6 s window during which the Ratio cloud still serves pre-write
+    values (issue #69). A non-immediate debouncer defers it instead.
+    """
+    from custom_components.ratio.const import POST_WRITE_SETTLE_SECONDS
+
+    client = _make_full_client()
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+
+    debouncer = coord._debounced_refresh
+    assert debouncer.immediate is False
+    assert debouncer.cooldown == POST_WRITE_SETTLE_SECONDS
+    assert POST_WRITE_SETTLE_SECONDS > 6  # above the observed propagation lag

@@ -38,6 +38,17 @@ _LOGGER = logging.getLogger(__name__)
 _CHARGE_MODE_FALLBACK = ["Smart", "SmartSolar", "PureSolar"]
 
 
+def _is_writable(opt: CpmsConfig) -> bool:
+    """Return True when a CPMS entry can be serialised for a PUT.
+
+    ``CpmsConfig.to_dict`` raises ``ValueError`` unless both ``central_system``
+    and ``url`` are set (``ConfiguredCpms$$serializer.java``:40-47 marks both
+    required and non-nullable). The test is against ``None``, not truthiness:
+    an empty ``centralSystem`` serialises fine and stays selectable.
+    """
+    return opt.central_system is not None and opt.url is not None
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: RatioConfigEntry,
@@ -243,10 +254,14 @@ class RatioCpmsSelect(_RatioSelectBase):
             return []
         opts = self.coordinator.data.cpms_options.get(self._serial)
         if opts:
-            return opts
+            return [opt for opt in opts if _is_writable(opt)]
         # Fallback: use the currently-configured CPMS as a single option.
         settings = self.coordinator.data.ocpp_settings.get(self._serial)
-        if settings is not None and settings.cpms is not None:
+        if (
+            settings is not None
+            and settings.cpms is not None
+            and _is_writable(settings.cpms)
+        ):
             return [settings.cpms]
         return []
 
@@ -282,11 +297,7 @@ class RatioCpmsSelect(_RatioSelectBase):
 
     @property
     def options(self) -> list[str]:  # pyright: ignore[reportIncompatibleVariableOverride]
-        return [
-            self._option_label(opt)
-            for opt in self._available_options()
-            if opt.central_system or opt.url
-        ]
+        return [self._option_label(opt) for opt in self._available_options()]
 
     @property
     def current_option(self) -> str | None:  # pyright: ignore[reportIncompatibleVariableOverride]

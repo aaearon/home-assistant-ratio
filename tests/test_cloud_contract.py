@@ -34,6 +34,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.ratio.const import DOMAIN
 from custom_components.ratio.coordinator import RatioData
 from custom_components.ratio.number import RatioMaximumChargingCurrentNumber
+from custom_components.ratio.select import RatioCpmsSelect
 from custom_components.ratio.switch import RatioOcppEnabledSwitch
 
 SERIAL = "SN-CONTRACT"
@@ -207,6 +208,42 @@ async def test_ocpp_switch_write_reaches_the_transport(
 
     _assert_settings_envelope(
         transport.calls[0], kind="installerOcpp", inner={"enabled": True}
+    )
+
+
+@pytest.mark.asyncio
+async def test_cpms_select_write_reaches_the_transport(
+    real_client: tuple[RatioClient, RecordingTransport],
+) -> None:
+    """Sparse ``SetInstallerOcppSettings``: only ``cpms``, both keys present.
+
+    ``ConfiguredCpms$$serializer.java``:40-47 declares ``centralSystem`` and
+    ``url`` required and non-nullable, so the body must carry both.
+    """
+    from aioratio.models import CpmsConfig, InstallerOcppSettings
+
+    client, transport = real_client
+    coord = _passthrough_coordinator(
+        RatioData(
+            ocpp_settings={SERIAL: InstallerOcppSettings()},
+            cpms_options={
+                SERIAL: [
+                    CpmsConfig(central_system="Op A", url="ws://a.com"),
+                    CpmsConfig(url="ws://orphan.com"),
+                ]
+            },
+        )
+    )
+
+    entity = RatioCpmsSelect(coord, client, SERIAL)
+    # The unwritable, URL-only entry is never offered.
+    assert entity.options == ["Op A"]
+    await entity.async_select_option("Op A")
+
+    _assert_settings_envelope(
+        transport.calls[0],
+        kind="installerOcpp",
+        inner={"cpms": {"centralSystem": "Op A", "url": "ws://a.com"}},
     )
 
 

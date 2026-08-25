@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,8 +18,10 @@ from aioratio.models.settings import UpperLowerLimitSetting
 from homeassistant.const import STATE_UNAVAILABLE
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.event import async_track_state_change_event
 
+from custom_components.ratio.const import DOMAIN
 from custom_components.ratio.coordinator import RatioData
 from custom_components.ratio.number import (
     RatioMaximumChargingCurrentNumber,
@@ -769,3 +772,115 @@ def test_non_finite_bounds_never_reach_the_display_attributes(lower, upper) -> N
 
     assert entity.native_min_value == 6.0
     assert entity.native_max_value == 32.0
+
+
+# ---------------------------------------------------------------------------
+# Post-write refresh timing (issue #69)
+# ---------------------------------------------------------------------------
+
+
+def _limit(value: float) -> UpperLowerLimitSetting:
+    return UpperLowerLimitSetting(value=value, lower=6.0, upper=32.0)
+
+
+@pytest.mark.asyncio
+async def test_post_write_refresh_lands_after_cloud_propagation(
+    hass: HomeAssistant,
+    mock_config_entry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """A write's refresh must read the cloud *after* it has propagated.
+
+    The Ratio cloud takes ~3-6 s to make a PUT visible to a subsequent GET,
+    and it cascades ``maximumChargingCurrent`` onto
+    ``smartSolarStartingCurrent`` server-side (issue #69). A refresh issued
+    the instant the PUT returns therefore reads pre-write values for *both*
+    entities, and nothing reads again until the 60 s poll.
+
+    ``freezegun`` cannot be used here — freezing the clock across
+    ``async_setup`` breaks ``mashumaro``'s code generation in the ``usb``
+    dependency — so wall-clock is modelled with an explicit counter and the
+    debouncer's timer is fired by hand.
+    """
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    client = mock_ratio_client.return_value
+    client.chargers_overview = AsyncMock(
+        return_value=[ChargerOverview.from_dict({"serialNumber": SERIAL})]
+    )
+
+    # Modelled wall-clock, in seconds, advanced explicitly by the test.
+    clock = {"now": 0.0}
+    propagated_at: dict[str, float | None] = {"at": None}
+    _PROPAGATION_S = 6.0
+
+    async def _set_user_settings(*_args, **_kwargs) -> None:
+        propagated_at["at"] = clock["now"] + _PROPAGATION_S
+
+    def _current(pre: float, post: float) -> float:
+        at = propagated_at["at"]
+        return post if at is not None and clock["now"] >= at else pre
+
+    async def _user_settings(_serial: str) -> UserSettings:
+        return UserSettings(
+            maximum_charging_current=_limit(_current(16.0, 15.0)),
+            minimum_charging_current=_limit(6.0),
+        )
+
+    async def _solar_settings(_serial: str) -> SolarSettings:
+        # The server-side cascade lowers the smart-solar starting current too.
+        return SolarSettings(
+            sun_on_delay_minutes=UpperLowerLimitSetting(
+                value=2.0, lower=0.0, upper=10.0
+            ),
+            sun_off_delay_minutes=UpperLowerLimitSetting(
+                value=3.0, lower=0.0, upper=15.0
+            ),
+            pure_solar_starting_current=_limit(6.0),
+            smart_solar_starting_current=_limit(_current(16.0, 15.0)),
+        )
+
+    client.set_user_settings = AsyncMock(side_effect=_set_user_settings)
+    client.user_settings = AsyncMock(side_effect=_user_settings)
+    client.solar_settings = AsyncMock(side_effect=_solar_settings)
+
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    max_current = registry.async_get_entity_id(
+        "number", DOMAIN, f"{SERIAL}_maximum_charging_current"
+    )
+    smart_solar = registry.async_get_entity_id(
+        "number", DOMAIN, f"{SERIAL}_smart_solar_starting_current"
+    )
+    assert max_current is not None and smart_solar is not None
+    assert hass.states.get(max_current).state == "16.0"
+    assert hass.states.get(smart_solar).state == "16.0"
+
+    solar_reads_before = client.solar_settings.await_count
+
+    await hass.services.async_call(
+        "number",
+        "set_value",
+        {"entity_id": max_current, "value": 15},
+        blocking=True,
+    )
+    await hass.async_block_till_done()
+
+    # Nothing correct can be known yet — the cloud has not propagated the PUT.
+    assert hass.states.get(smart_solar).state == "16.0"
+
+    # Wall-clock moves past the propagation window; the post-write refresh
+    # is due at POST_WRITE_SETTLE_SECONDS.
+    clock["now"] += 15.0
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=15))
+    await hass.async_block_till_done()
+
+    assert hass.states.get(max_current).state == "15.0"
+    assert hass.states.get(smart_solar).state == "15.0"
+    assert client.solar_settings.await_count == solar_reads_before + 1
+
+    await hass.config_entries.async_unload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()

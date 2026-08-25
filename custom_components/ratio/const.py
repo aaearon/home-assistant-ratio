@@ -8,6 +8,18 @@ from typing import Any
 DOMAIN = "ratio"
 DEFAULT_SCAN_INTERVAL = 60  # seconds
 
+POST_WRITE_SETTLE_SECONDS = 10
+"""Cooldown for the coordinator's request-refresh debouncer, in seconds.
+
+The Ratio cloud takes ~3-6 s to make a PUT visible to a subsequent GET, and
+it applies its own server-side cascades (e.g. lowering
+``maximumChargingCurrent`` also lowers ``smartSolarStartingCurrent``). With
+HA's default ``immediate=True`` debouncer the post-command refresh runs
+synchronously and reads pre-write values, which then stand until the next
+``DEFAULT_SCAN_INTERVAL`` poll. Deferring it past the propagation window costs
+~10 s of feedback latency and buys correct data.
+"""
+
 CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 CONF_BLE_ENABLED_SERIALS = "ble_enabled_serials"

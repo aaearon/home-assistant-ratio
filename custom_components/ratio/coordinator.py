@@ -35,6 +35,7 @@ from homeassistant.exceptions import (
     HomeAssistantError,
     ServiceValidationError,
 )
+from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -42,6 +43,7 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
+    POST_WRITE_SETTLE_SECONDS,
     STORAGE_KEY_PREFERENCES,
     STORAGE_VERSION,
 )
@@ -78,6 +80,15 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
             config_entry=entry,
             name=f"{DOMAIN}_{entry.entry_id}",
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
+            # Non-immediate: every command ends in async_request_refresh(),
+            # and the cloud needs ~3-6 s to make a PUT visible to a GET.
+            # See POST_WRITE_SETTLE_SECONDS.
+            request_refresh_debouncer=Debouncer(
+                hass,
+                _LOGGER,
+                cooldown=POST_WRITE_SETTLE_SECONDS,
+                immediate=False,
+            ),
         )
         self.client = client
         self.entry = entry
