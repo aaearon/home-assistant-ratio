@@ -9,15 +9,14 @@ DOMAIN = "ratio"
 DEFAULT_SCAN_INTERVAL = 60  # seconds
 
 POST_WRITE_SETTLE_SECONDS = 10
-"""Cooldown for the coordinator's request-refresh debouncer, in seconds.
+"""Delay before a command's confirming refresh, in seconds.
 
-The Ratio cloud takes ~3-6 s to make a PUT visible to a subsequent GET, and
-it applies its own server-side cascades (e.g. lowering
-``maximumChargingCurrent`` also lowers ``smartSolarStartingCurrent``). With
-HA's default ``immediate=True`` debouncer the post-command refresh runs
-synchronously and reads pre-write values, which then stand until the next
-``DEFAULT_SCAN_INTERVAL`` poll. Deferring it past the propagation window costs
-~10 s of feedback latency and buys correct data.
+The Ratio cloud takes ~3-6 s to make a PUT visible to a subsequent GET, and it
+applies its own server-side cascades (e.g. lowering ``maximumChargingCurrent``
+also lowers ``smartSolarStartingCurrent``). A refresh issued the instant the
+PUT returns therefore reads pre-write values, which then stand until the next
+``DEFAULT_SCAN_INTERVAL`` poll. Waiting past the propagation window costs ~10 s
+of feedback latency and buys correct data.
 """
 
 CONF_EMAIL = "email"

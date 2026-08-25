@@ -29,13 +29,13 @@ from aioratio.models import (
 from aioratio.models.diagnostics import ChargerDiagnostics
 from aioratio.models.history import Session
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import (
     ConfigEntryAuthFailed,
     HomeAssistantError,
     ServiceValidationError,
 )
-from homeassistant.helpers.debounce import Debouncer
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
@@ -80,15 +80,6 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
             config_entry=entry,
             name=f"{DOMAIN}_{entry.entry_id}",
             update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL),
-            # Non-immediate: every command ends in async_request_refresh(),
-            # and the cloud needs ~3-6 s to make a PUT visible to a GET.
-            # See POST_WRITE_SETTLE_SECONDS.
-            request_refresh_debouncer=Debouncer(
-                hass,
-                _LOGGER,
-                cooldown=POST_WRITE_SETTLE_SECONDS,
-                immediate=False,
-            ),
         )
         self.client = client
         self.entry = entry
@@ -101,6 +92,8 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         self._prefs_lock = asyncio.Lock()
         # Track last CPMS fetch time; refresh at most every 10 minutes.
         self._cpms_last_fetch: _datetime_type | None = None
+        # Pending post-write settle refresh, if any. See POST_WRITE_SETTLE_SECONDS.
+        self._settle_unsub: CALLBACK_TYPE | None = None
         self._prefs_store: Store[dict[str, Any]] = Store(
             hass,
             STORAGE_VERSION,
@@ -362,8 +355,53 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
                 translation_key="command_failed",
                 translation_placeholders={"command": name, "error": str(err)},
             ) from err
-        await self.async_request_refresh()
+        self._schedule_settle_refresh()
         return result
+
+    @callback
+    def _schedule_settle_refresh(self) -> None:
+        """(Re)arm the confirming refresh for POST_WRITE_SETTLE_SECONDS from now.
+
+        Deliberately *not* routed through ``async_request_refresh()``. HA's
+        request-refresh debouncer is the wrong instrument for this in two
+        independent ways:
+
+        * Non-immediate, it anchors its timer to the **first** call of a burst
+          — ``Debouncer._async_schedule_or_call_now`` only flips
+          ``_execute_at_end_of_timer`` when a timer already exists and never
+          reschedules. Writes at t=0 and t=9 would refresh at t=10, one second
+          after the second write and still inside the propagation window.
+        * ``DataUpdateCoordinator._async_refresh`` calls
+          ``self._debounced_refresh.async_cancel()``, which clears
+          ``_execute_at_end_of_timer``. Any ordinary poll landing inside the
+          settle window would silently swallow the confirming read, leaving the
+          pre-write value on screen until the *next* poll.
+
+        A dedicated one-shot fixes both: it is re-armed from the latest write,
+        and a poll cannot consume it. It still delegates the actual refresh to
+        ``async_request_refresh()`` so the debouncer's execute lock continues
+        to serialise refreshes.
+        """
+        self._async_cancel_settle_refresh()
+        self._settle_unsub = async_call_later(
+            self.hass, POST_WRITE_SETTLE_SECONDS, self._async_settle_refresh
+        )
+
+    @callback
+    def _async_cancel_settle_refresh(self) -> None:
+        if self._settle_unsub is not None:
+            self._settle_unsub()
+            self._settle_unsub = None
+
+    async def _async_settle_refresh(self, _now: _datetime_type) -> None:
+        """Read back the written document once the cloud has propagated it."""
+        self._settle_unsub = None
+        await self.async_request_refresh()
+
+    async def async_shutdown(self) -> None:
+        """Cancel the pending settle refresh along with the usual teardown."""
+        self._async_cancel_settle_refresh()
+        await super().async_shutdown()
 
 
 # ---------------------------------------------------------------------------

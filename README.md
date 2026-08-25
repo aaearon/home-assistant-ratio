@@ -291,11 +291,24 @@ unwritable entity available produced two different errors for the same state
 depending on where the requested value fell.
 
 Writes are not immediately readable. A PUT takes roughly 3-6 seconds to become
-visible to a subsequent GET, so the refresh every command schedules runs
-through a non-immediate debouncer (`POST_WRITE_SETTLE_SECONDS`, 10 s) instead
-of HA's default immediate one. An immediate refresh lands inside the
-propagation window, caches the pre-write values, and leaves them on screen
-until the next 60 s poll.
+visible to a subsequent GET, so a command does not refresh inline; it arms a
+one-shot settle timer (`POST_WRITE_SETTLE_SECONDS`, 10 s) and returns. An
+inline refresh lands inside the propagation window, caches the pre-write
+values, and leaves them on screen until the next 60 s poll.
+
+The settle timer is deliberately **not** HA's request-refresh debouncer, which
+fails this job in two independent ways. Non-immediate, it anchors its timer to
+the *first* call of a burst — `Debouncer._async_schedule_or_call_now` only
+flips `_execute_at_end_of_timer` when a timer already exists and never
+reschedules — so writes at t=0 and t=9 would refresh at t=10, one second after
+the second write. And `DataUpdateCoordinator._async_refresh` calls
+`self._debounced_refresh.async_cancel()`, so any ordinary 60 s poll landing
+inside the settle window would swallow the confirming read entirely. The
+dedicated one-shot re-arms from the latest write and cannot be consumed by a
+poll; it still delegates to `async_request_refresh()` so the debouncer's
+execute lock keeps serialising refreshes. It is cancelled on entry unload
+(`async_shutdown`, which the coordinator registers via
+`config_entry.async_on_unload`) so it can never fire through a closed client.
 
 The cloud also applies its own cross-document cascades: lowering
 `userSettings.maximumChargingCurrent` was observed to lower

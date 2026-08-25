@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioratio.models import (
@@ -354,6 +354,7 @@ def _make_full_client(serial: str = "ABC123") -> MagicMock:
     client.cpms_options = AsyncMock(
         return_value=[CpmsConfig(central_system="Op", url="ws://op.com")]
     )
+    client.set_user_settings = AsyncMock()
     return client
 
 
@@ -495,24 +496,126 @@ async def test_cpms_backoff_not_started_on_rate_limit(
     assert coord._cpms_last_fetch is None
 
 
+# ---------------------------------------------------------------------------
+# Post-write settle refresh (issue #69)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
-async def test_coordinator_uses_non_immediate_post_write_debouncer(
+async def test_settle_refresh_deadline_resets_on_every_write(
     hass: HomeAssistant,
 ) -> None:
-    """Post-write refreshes must be delayed past the cloud's propagation lag.
+    """Each write must restart the settle countdown, not extend the first one.
 
-    ``request_command`` ends with ``async_request_refresh()``. With HA's
-    default ``immediate=True`` debouncer that GET runs synchronously, inside
-    the ~3-6 s window during which the Ratio cloud still serves pre-write
-    values (issue #69). A non-immediate debouncer defers it instead.
+    HA's non-immediate ``Debouncer`` anchors its timer to the *first* call of
+    a burst — ``_async_schedule_or_call_now`` only sets
+    ``_execute_at_end_of_timer`` when a timer already exists, it never
+    reschedules. Writes at t=0 and t=9 would then refresh at t=10, one second
+    after the second write and squarely inside the propagation window.
     """
     from custom_components.ratio.const import POST_WRITE_SETTLE_SECONDS
+
+    assert POST_WRITE_SETTLE_SECONDS > 6  # above the observed propagation lag
 
     client = _make_full_client()
     entry = _make_entry(hass)
     coord = RatioCoordinator(hass, client, entry)
 
-    debouncer = coord._debounced_refresh
-    assert debouncer.immediate is False
-    assert debouncer.cooldown == POST_WRITE_SETTLE_SECONDS
-    assert POST_WRITE_SETTLE_SECONDS > 6  # above the observed propagation lag
+    cancels: list[MagicMock] = []
+    delays: list[float] = []
+
+    def _fake_call_later(_hass, delay, _action):
+        delays.append(delay)
+        unsub = MagicMock()
+        cancels.append(unsub)
+        return unsub
+
+    with patch(
+        "custom_components.ratio.coordinator.async_call_later",
+        side_effect=_fake_call_later,
+    ):
+        await coord.request_command(client.set_user_settings, "SN1")
+        await coord.request_command(client.set_user_settings, "SN1")
+
+    assert delays == [POST_WRITE_SETTLE_SECONDS, POST_WRITE_SETTLE_SECONDS]
+    # The first timer is cancelled by the second write; only the latest stands.
+    cancels[0].assert_called_once()
+    cancels[1].assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_settle_refresh_survives_a_scheduled_poll(
+    hass: HomeAssistant,
+) -> None:
+    """A periodic poll landing mid-settle must not consume the settle read.
+
+    ``DataUpdateCoordinator._async_refresh`` calls
+    ``self._debounced_refresh.async_cancel()``, which clears
+    ``_execute_at_end_of_timer``. Routing the post-write refresh through the
+    request-refresh debouncer therefore loses it entirely whenever the 60 s
+    poll falls inside the settle window — the pre-write value then stands
+    until the *next* poll, which is the very bug #69 describes.
+    """
+    from homeassistant.util import dt as dt_util
+    from pytest_homeassistant_custom_component.common import async_fire_time_changed
+
+    client = _make_full_client()
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+    await coord.async_refresh()
+
+    await coord.request_command(client.set_user_settings, "SN1")
+
+    # A scheduled poll arrives while the write is still settling.
+    await coord.async_refresh()
+    reads_after_poll = client.chargers_overview.await_count
+
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=15))
+    await hass.async_block_till_done()
+
+    assert client.chargers_overview.await_count == reads_after_poll + 1
+
+    await coord.async_shutdown()
+
+
+@pytest.mark.asyncio
+async def test_settle_refresh_is_cancelled_on_shutdown(
+    hass: HomeAssistant,
+) -> None:
+    """An unloaded entry must not leave a settle timer armed."""
+    client = _make_full_client()
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+
+    await coord.request_command(client.set_user_settings, "SN1")
+    assert coord._settle_unsub is not None
+
+    await coord.async_shutdown()
+    assert coord._settle_unsub is None
+
+
+@pytest.mark.asyncio
+async def test_unloading_the_entry_cancels_a_pending_settle_refresh(
+    hass: HomeAssistant,
+    mock_config_entry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """A settle timer must not outlive its config entry.
+
+    ``async_unload_entry`` closes the client. A timer left armed would fire
+    afterwards and refresh through a closed session.
+    """
+    client = mock_ratio_client.return_value
+    client.chargers_overview = AsyncMock(return_value=[_overview("SN001")])
+
+    await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    coord = mock_config_entry.runtime_data.coordinator
+
+    await coord.request_command(client.set_user_settings, "SN001")
+    assert coord._settle_unsub is not None
+
+    await hass.config_entries.async_unload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert coord._settle_unsub is None

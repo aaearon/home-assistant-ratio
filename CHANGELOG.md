@@ -9,8 +9,9 @@ All notable changes to this project will be documented in this file.
 - **Settings written from HA no longer show a stale value for up to a minute.**
   Every command scheduled an immediate refresh, but the Ratio cloud needs ~3-6 s
   to make a PUT visible to a subsequent GET, so that refresh cached pre-write
-  values and nothing read again until the next 60 s poll. The coordinator now
-  uses a non-immediate refresh debouncer (`POST_WRITE_SETTLE_SECONDS`, 10 s), so
+  values and nothing read again until the next 60 s poll. A command now arms a
+  one-shot settle timer (`POST_WRITE_SETTLE_SECONDS`, 10 s) instead, re-armed
+  from the latest write and immune to being cancelled by an ordinary poll, so
   the single refresh it already performed lands after the write has propagated.
   This also surfaces the cloud's server-side cascade from
   `maximumChargingCurrent` onto `smartSolarStartingCurrent` within ~10 s instead
