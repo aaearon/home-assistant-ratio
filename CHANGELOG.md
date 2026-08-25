@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`ratio.set_schedule` accepts an `enabled` flag.** The service hardcoded
+  `enabled: true`, so changing the charging times also forcibly activated the
+  schedule, and nothing in the integration could ever deactivate it — a charger
+  left with stored-but-inactive times armed a live charging window the moment
+  the times were adjusted, recoverable only from the vendor app. `enabled` is
+  now an optional boolean field defaulting to `true`, preserving existing
+  automation behaviour (and matching the app's own week-plan save) while making
+  `false` expressible. Pre-existing behaviour, not a regression. (#72)
+
 ### Fixed
 
 - **Settings writes now send only the key that changed.** Changing maximum or

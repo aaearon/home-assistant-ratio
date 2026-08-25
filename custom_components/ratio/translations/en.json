@@ -255,7 +255,17 @@
     },
     "set_schedule": {
       "name": "Set schedule",
-      "description": "Replace the weekly charge schedule for the targeted Ratio charger."
+      "description": "Replace the weekly charge schedule for the targeted Ratio charger.",
+      "fields": {
+        "slots": {
+          "name": "Slots",
+          "description": "List of schedule slots, each with a start time, an end time and a list of weekdays."
+        },
+        "enabled": {
+          "name": "Enabled",
+          "description": "Whether the schedule is active after the times are written. Defaults to true. Set to false to store the times without arming them, or to deactivate a currently active schedule."
+        }
+      }
     },
     "add_vehicle": {
       "name": "Add vehicle",

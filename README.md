@@ -67,7 +67,7 @@ Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle,
 |---|---|---|---|
 | `ratio.start_charge` | `device_id` | `vehicle_id?` | — |
 | `ratio.stop_charge` | `device_id` | — | — |
-| `ratio.set_schedule` | `device_id` | `slots` (list of `{start, end, days}`) | — |
+| `ratio.set_schedule` | `device_id` | `slots` (list of `{start, end, days}`), `enabled?` (default `true`) | — |
 | `ratio.add_vehicle` | — | `vehicle_name`, `license_plate?` | `{vehicle_id}` |
 | `ratio.remove_vehicle` | — | `vehicle_id` | — |
 | `ratio.import_session_history` | — | `begin_time`, `end_time` | `{imported: {serial: count}}` |

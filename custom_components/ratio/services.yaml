@@ -37,6 +37,17 @@ set_schedule:
           days: [Mon, Tue, Wed, Thu, Fri]
       selector:
         object:
+    enabled:
+      name: Enabled
+      description: >-
+        Whether the schedule is active after the times are written. Defaults to
+        true, which activates the schedule. Set to false to store the times
+        without arming them, or to deactivate a currently active schedule.
+      required: false
+      default: true
+      example: true
+      selector:
+        boolean:
 
 add_vehicle:
   name: Add vehicle

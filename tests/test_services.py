@@ -87,6 +87,9 @@ async def test_set_schedule_calls_client_directly(
     optional and nullable; ``WeekPlanViewModel.java:99`` sends exactly
     ``enabled``, ``scheduleType`` and ``weekSchedule``. Under aioratio 0.12.0
     the GET model ``ChargeSchedule`` is rejected with ``TypeError``.
+
+    Also pins the default: omitting ``enabled`` must keep sending ``true``, so
+    automations written before the flag existed are unaffected.
     """
     from aioratio.models import ChargeScheduleUpdate
 
@@ -134,6 +137,108 @@ async def test_set_schedule_calls_client_directly(
             "sunday": [],
         },
     }
+
+
+@pytest.mark.parametrize(
+    ("enabled", "expected"),
+    [(True, True), (False, False)],
+)
+@pytest.mark.asyncio
+async def test_set_schedule_honours_explicit_enabled(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+    enabled: bool,
+    expected: bool,
+) -> None:
+    """``enabled`` is caller-controlled, so a schedule can be deactivated.
+
+    ``ChargeSchedulePutSettings$$serializer.java`` declares ``enabled``
+    optional and nullable, so ``false`` is a legitimate value. Without this the
+    service is a one-way door: nothing else in the integration writes the
+    schedule's ``enabled`` field, so a schedule armed by ``set_schedule`` could
+    only be turned off again from the vendor app.
+    """
+    from aioratio.models import ChargeScheduleUpdate
+
+    entry = setup_integration
+    client = mock_ratio_client.return_value
+
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, f"SN-SCH-{enabled}")},
+    )
+
+    await hass.services.async_call(
+        DOMAIN,
+        "set_schedule",
+        {
+            "device_id": device.id,
+            "slots": [{"start": "03:00", "end": "07:00", "days": ["monday"]}],
+            "enabled": enabled,
+        },
+        blocking=True,
+    )
+
+    client.set_charge_schedule.assert_awaited_once()
+    update = client.set_charge_schedule.await_args.args[1]
+    assert isinstance(update, ChargeScheduleUpdate)
+    assert update.to_dict() == {
+        "enabled": expected,
+        "scheduleType": "WeekSchedule",
+        "weekSchedule": {
+            "monday": [
+                {
+                    "beginTimeHour": 3,
+                    "beginTimeMinute": 0,
+                    "endTimeHour": 7,
+                    "endTimeMinute": 0,
+                }
+            ],
+            "tuesday": [],
+            "wednesday": [],
+            "thursday": [],
+            "friday": [],
+            "saturday": [],
+            "sunday": [],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_set_schedule_rejects_non_boolean_enabled(
+    hass: HomeAssistant,
+    device_registry: dr.DeviceRegistry,
+    setup_integration: MockConfigEntry,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """``enabled`` must fail validation rather than reach the wire as junk.
+
+    The serializer types the element ``Boolean?``; a string would be rejected
+    by the cloud with an opaque error.
+    """
+    import voluptuous as vol
+
+    entry = setup_integration
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "SN-SCH-BADEN")},
+    )
+
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(
+            DOMAIN,
+            "set_schedule",
+            {
+                "device_id": device.id,
+                "slots": [{"start": "03:00", "end": "07:00", "days": ["monday"]}],
+                "enabled": "sometimes",
+            },
+            blocking=True,
+        )
+
+    mock_ratio_client.return_value.set_charge_schedule.assert_not_called()
 
 
 @pytest.mark.asyncio
