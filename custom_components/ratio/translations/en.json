@@ -153,6 +153,8 @@
     },
     "select": {
       "charge_mode": { "name": "Charge mode" },
+      "start_mode": { "name": "Start mode" },
+      "cable_settings": { "name": "Cable settings" },
       "active_vehicle": { "name": "Active vehicle" },
       "cpms": {
         "name": "CPMS",
