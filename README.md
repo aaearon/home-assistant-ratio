@@ -274,6 +274,17 @@ parameter and the `set_charge_schedule()` type guard included. Any write path
 whose contract with the library matters belongs there as well as in its
 platform test; a breaking library change should turn it red.
 
+The charger states, per setting, whether it will accept a write. Entities that
+own such a setting gate their `available` on that flag rather than letting the
+write fail at the cloud: `select.charge_mode` on
+`chargingMode.isChangeAllowed`, `select.cpms` and
+`text.charge_point_identifier` on their `OcppFieldStatus`, and
+`switch.ocpp_enabled` likewise. Home Assistant filters unavailable entities out
+of `entity_service_call`, so the gate is what actually blocks the write. A
+*missing* settings document is never treated as a lock — only an explicit
+`false` — and `aioratio` defaults the flag to `True` when the key is absent, so
+a charger that omits it stays controllable.
+
 Range validation on writes is fail-closed. `_default_min` / `_default_max` on
 the number entities exist only so the frontend slider has two floats to render
 when the cache is empty — they are **not** charger limits (the reference

@@ -6,6 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **`select.<charger>_charge_mode` no longer offers a write a locked charger
+  will refuse.** The charger reports `isChangeAllowed` for `chargingMode` on
+  every GET — `ChargeModeSettings$$serializer.java`:41-43 declares it a
+  required element — but the entity had no availability gate at all, unlike
+  `select.cpms`, `text.charge_point_identifier` and `switch.ocpp_enabled`,
+  which have gated on their equivalent flag since 0.10.0. A charger that locks
+  the mode presented a fully writable select whose every write the cloud
+  rejected. Requires `aioratio` 0.13.0, which is the release that stopped
+  discarding the flag. Only an explicit `false` blocks; a missing settings
+  document does not.
+
 - **Settings written from HA no longer show a stale value for up to a minute.**
   Every command scheduled an immediate refresh, but the Ratio cloud needs ~3-6 s
   to make a PUT visible to a subsequent GET, so that refresh cached pre-write

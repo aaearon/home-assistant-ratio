@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aioratio.models import UserSettings, Vehicle
+from aioratio.models import ChargerOverview, UserSettings, Vehicle
 from aioratio.models.settings import ChargeModeSettings
 
 from custom_components.ratio.coordinator import RatioData
@@ -201,3 +201,59 @@ async def test_active_vehicle_select_unknown_option_logs_warning() -> None:
     # This should not raise, just log
     await entity.async_select_option("NonExistent")
     assert SERIAL not in coord.preferred_vehicle
+
+
+# ---- Charge mode isChangeAllowed gating ----
+
+
+def _charge_mode_coord(
+    is_change_allowed: bool | None = None,
+    *,
+    with_settings: bool = True,
+) -> MagicMock:
+    """Coordinator carrying the charger plus an optional charging-mode setting."""
+    user_settings = {}
+    if with_settings:
+        kwargs = {
+            "value": "Smart",
+            "allowed_values": ["Smart", "SmartSolar", "PureSolar"],
+        }
+        if is_change_allowed is not None:
+            kwargs["is_change_allowed"] = is_change_allowed
+        user_settings[SERIAL] = UserSettings(charging_mode=ChargeModeSettings(**kwargs))
+    coord = _make_coordinator(user_settings=user_settings)
+    coord.data.chargers = {SERIAL: ChargerOverview.from_dict({"serialNumber": SERIAL})}
+    coord.last_update_success = True
+    return coord
+
+
+def test_charge_mode_unavailable_when_change_not_allowed() -> None:
+    """A charger that refuses mode changes must not offer a writable entity.
+
+    ``ChargeModeSettings$$serializer.java``:41-43 declares ``isChangeAllowed``
+    required. HA filters unavailable entities out of ``entity_service_call``,
+    so the gate is what actually blocks the write — the same treatment
+    ``select.cpms``, ``text.charge_point_identifier`` and
+    ``switch.ocpp_enabled`` already give their own flags.
+    """
+    entity = RatioChargeModeSelect(_charge_mode_coord(False), MagicMock(), SERIAL)
+    assert entity.available is False
+
+
+def test_charge_mode_available_when_change_allowed() -> None:
+    entity = RatioChargeModeSelect(_charge_mode_coord(True), MagicMock(), SERIAL)
+    assert entity.available is True
+
+
+def test_charge_mode_available_when_flag_absent() -> None:
+    """An omitted flag means "assume writable" — never black the entity out."""
+    entity = RatioChargeModeSelect(_charge_mode_coord(None), MagicMock(), SERIAL)
+    assert entity.available is True
+
+
+def test_charge_mode_available_when_settings_missing() -> None:
+    """No settings document yet is not a statement that the setting is locked."""
+    entity = RatioChargeModeSelect(
+        _charge_mode_coord(with_settings=False), MagicMock(), SERIAL
+    )
+    assert entity.available is True
