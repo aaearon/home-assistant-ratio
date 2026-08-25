@@ -46,7 +46,7 @@ One device per charger, with the following entities:
 | number | `maximum_charging_current`, `minimum_charging_current` | `user_settings` (GET/PUT) |
 | button | `grant_upgrade_permission` | approves queued firmware update jobs |
 | sensor (diagnostic) | `cpc_serial_number`, `hardware_type`, `firmware_version` | `diagnostics` endpoint — product info |
-| sensor (diagnostic, disabled by default) | `hardware_version`, `connectivity_firmware_version`, `connectivity_hardware_version` | `diagnostics` endpoint — product info |
+| sensor (diagnostic, disabled by default) | `hardware_version`, `connectivity_serial_number`, `connectivity_firmware_version`, `connectivity_hardware_version` | `diagnostics` endpoint — product info |
 | sensor (diagnostic) | `wifi_ssid`, `wifi_rssi` (dBm), `connection_medium` | `diagnostics` endpoint — network status |
 | sensor (diagnostic, disabled by default) | `wifi_ip`, `ethernet_ip` | `diagnostics` endpoint — network status |
 | sensor (diagnostic, disabled by default) | `cpms_name`, `cpms_url` | `diagnostics` endpoint — OCPP status |
@@ -74,6 +74,7 @@ Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle,
 | `ratio.remove_vehicle` | — | `vehicle_id` | — |
 | `ratio.import_session_history` | — | `begin_time`, `end_time` | `{imported: {serial: count}}` |
 | `ratio.reconfigure_wifi` *(BLE only)* | `device_id` | `ssid`, `password?` | — |
+| `ratio.ble_probe` *(BLE only, diagnostic)* | `device_id` | — | `{serial, entry_id, local_name, candidates, chosen?, status, error?}` |
 
 Target a specific charger via Home Assistant's device picker (`device_id`). After any command, the coordinator triggers an immediate refresh.
 
@@ -148,6 +149,68 @@ automation:
 ```
 
 Replace `<serial>` with your charger's serial number (lowercase); find actual entity IDs under **Settings → Devices & Services → Ratio EV Charging → Entities**.
+
+## External control
+
+Third-party controllers — evcc, a Node-RED flow, a hand-written automation — drive the charger through the same entities the UI exposes; there is no separate control API. What follows is what has been confirmed on the reference charger, and, just as importantly, what has not.
+
+### Charge mode is the primary control
+
+`select.<charger>_charge_mode` picks the charger's own control strategy. Its options come from the charger's reported `allowedValues`; the hardcoded `Smart` / `SmartSolar` / `PureSolar` list (`custom_components/ratio/select.py:38`) is only a fallback for when the cloud omits them.
+
+The vendor's own descriptions of the modes are the only authoritative statement of what they do. Quoted verbatim from the decompiled app, `nl.ratio.ev.charger/resources/res/values/strings.xml:95-102`:
+
+| Mode | Vendor description |
+|---|---|
+| `Basic` | "Uses grid power to charge your vehicle. Load Balancing not active." |
+| `Smart` | "Uses grid power to charge your vehicle. Load Balancing will prevent overloading of you home connection." |
+| `SmartSolar` | "Your vehicle will be charged immediately with the set SmartSolar minimum current. Charging current will be increased with potential surplus out of the PV system." |
+| `PureSolar` | "Your vehicle will be charged using only solar energy. Charging will start as soon as the surplus of PV energy is greater than the set PureSolar minimum current." |
+
+(The typo in the `Smart` string is the vendor's.)
+
+What that establishes: in `SmartSolar` and `PureSolar` the charger runs its own PV-surplus loop and decides the delivered current itself, keyed off a *minimum* current — the values written by `number.<charger>_smart_solar_starting_current` and `number.<charger>_pure_solar_starting_current`. In `Basic` and `Smart` it draws from the grid, with load balancing active only in `Smart`.
+
+`Basic` appears in the app's strings but is not in the integration's fallback list and has not been observed on the reference charger. Read `options` off the entity rather than assuming any mode is selectable.
+
+### Read the current range from the entity
+
+The current-limit numbers accept whole amps only, within the range the charger reports through `lowerLimit`/`upperLimit`. Read `min` and `max` from the entity's attributes; do not hard-code them. The `6.0`–`32.0` class constants in `custom_components/ratio/number.py` are display scaffolding so the frontend slider has two floats to render — they are explicitly **not** charger limits and the write path never validates against them (`number.py:140-148`, `_display_bound` at `number.py:196-209`). The reference charger reports **6–16 A**, not 6–32.
+
+`step` is different: it is **not** charger-reported. The integration hardcodes `1.0` (`number.py:100`, assigned in `__init__` at `number.py:119`, overridden by no subclass and never read from the charger's descriptor). Whole amps are enforced independently of it, by `_validate` rejecting any non-integer value (`number.py:247`). Rely on whole amps by all means, but do not read `step` as evidence of what the charger said.
+
+A write outside the reported range, or while the bounds are unknown, is refused rather than clamped — see [Cloud write contract](#cloud-write-contract).
+
+### What `maximumChargingCurrent` does is still an open question
+
+The relationship between `number.<charger>_maximum_charging_current` and the current the charger actually delivers in the solar modes is **not yet characterised**. The vendor strings never mention `maximumChargingCurrent` at all; the two currents they do name are minima, and neither is the setting this number writes. The same caveat applies to `Smart` — it has not been confirmed that delivered current tracks the maximum there either.
+
+This README will not tell you the limit is a ceiling on the charger's surplus loop, and it will not tell you it is a setpoint commanding a current. The evidence supports neither. A controller that needs deterministic current control should test its own charger's behaviour before relying on either reading.
+
+What would settle it is a live charging session, vehicle connected, on a charger with a working PV/meter feed, recording per mode (`Smart`, `SmartSolar`, `PureSolar`):
+
+- the value written to `maximumChargingCurrent`,
+- the delivered current the charger reports,
+- the PV surplus at the same moment.
+
+Measurements from users who have run that are welcome — please open an issue.
+
+`start_mode` and `cable_settings` are in the same position, exposed but not characterised; see [Known limitations](#known-limitations).
+
+### Unavailable is not the same as offline
+
+The cloud locks settings **selectively**, field by field, and the integration mirrors that per entity. Confirmed live: in a single GET cycle on one charger, `cpms` and `chargePointIdentifier` were locked (`isChangeAllowed: false`) while `chargingMode`, `startMode` and `cableSettings` were all writable.
+
+- `select.charge_mode` goes unavailable on `chargingMode.isChangeAllowed: false` (`custom_components/ratio/select.py:131-150`). `select.cpms`, `text.charge_point_identifier` and `switch.ocpp_enabled` do the same on their own flags.
+- A number goes unavailable whenever its charger-reported bounds are unknown (`number.py:166-187`): an entity whose writes cannot be validated must not present itself as writable.
+
+A controller must therefore not treat one unavailable entity as "the charger is down". Check the entity you actually need, and use the binary sensors for connectivity.
+
+### Write and confirm timing
+
+A write takes roughly 3–6 s to become visible to a subsequent read, so the integration defers its confirming refresh by `POST_WRITE_SETTLE_SECONDS` (10 s) rather than reading back a stale value; regular polling is every 60 s. A controller ticking faster than 10 s, re-arming the deferred refresh on every tick, produces no post-write refreshes at all. See [Stale or missing data](#stale-or-missing-data).
+
+Related: a write that requests the value the entity already reports is suppressed and never sent to the cloud (#66). That matters to any controller that rewrites its target every cycle — it costs no cloud traffic, and it triggers no confirmation refresh either. The [Cloud write contract](#cloud-write-contract) covers the write path in full.
 
 ## How it works
 

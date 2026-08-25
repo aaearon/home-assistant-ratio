@@ -16,6 +16,19 @@ All notable changes to this project will be documented in this file.
   reports `[Manual, Auto]`, the reverse of the `StartMode.java` enum ordinals,
   so ordinals are not a safe source. What `Manual` actually changes is not
   characterised; it is offered because the charger reports it as allowed. (#65)
+- **README documents external control (evcc and friends).** A new "External
+  control" section covers `select.charge_mode` as the primary control with the
+  vendor's own mode descriptions quoted from the decompiled app, reading the
+  current range from the entity's `min`/`max` rather than hard-coding 32 A
+  (`step` is hardcoded `1.0` and is not charger-reported; whole amps are
+  enforced separately by `_validate`), the selective per-field
+  `isChangeAllowed` locking that means one unavailable entity is not a charger
+  outage, and write/confirm timing against `POST_WRITE_SETTLE_SECONDS`. It
+  states plainly that the relationship between `maximumChargingCurrent` and
+  delivered current is **not yet characterised** in the solar modes or in
+  `Smart`, and names the measurements that would settle it. Also adds the
+  previously undocumented `ratio.ble_probe` service and the
+  `connectivity_serial_number` diagnostic sensor to the reference tables. (#67)
 - **`select.<charger>_cable_settings` exposes the cable-lock behaviour.** The
   `cableSettings` user setting (`LockWhenCarConnected` / `LockAutomatically` /
   `LockAlways`) was likewise read but unexposed. Same shape as above: sparse
