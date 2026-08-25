@@ -127,6 +127,29 @@ class RatioChargeModeSelect(_RatioSelectBase):
         super().__init__(coordinator, client, serial, "charge_mode")
 
     @property
+    def available(self) -> bool:  # pyright: ignore[reportIncompatibleVariableOverride]
+        """Unavailable while the charger refuses charging-mode changes.
+
+        ``ChargeModeSettings$$serializer.java``:41-43 declares
+        ``isChangeAllowed`` a required element, so a charger that locks the
+        setting says so on every GET. HA filters unavailable entities out of
+        ``entity_service_call``, which is what actually blocks the write —
+        the same treatment ``RatioCpmsSelect``,
+        ``RatioChargePointIdentifierText`` and ``RatioOcppEnabledSwitch``
+        already give their own flags.
+
+        A *missing* settings document is not a statement that the setting is
+        locked; only an explicit ``False`` blocks. ``is_change_allowed``
+        itself defaults to ``True`` in the library when the key is absent.
+        """
+        if not super().available or self.coordinator.data is None:
+            return False
+        settings = self.coordinator.data.user_settings.get(self._serial)
+        if settings is None or settings.charging_mode is None:
+            return True
+        return settings.charging_mode.is_change_allowed
+
+    @property
     def options(self) -> list[str]:  # pyright: ignore[reportIncompatibleVariableOverride]
         if self.coordinator.data is None:
             return list(_CHARGE_MODE_FALLBACK)
