@@ -263,6 +263,15 @@ the current screen changed. Write paths therefore use the `*Update` DTOs
 asserts the exact body, and its keys come from the matching
 `$$serializer.java` in the decompiled app, never from recollection.
 
+`tests/conftest.py` mocks every cloud setter, so the per-platform tests stop at
+the DTO. `tests/test_cloud_contract.py` closes that gap: it wires the **real**
+`RatioClient` to a recording transport (the same pattern as `aioratio`'s own
+`tests/test_client.py`) and asserts the JSON that would go on the wire —
+`_coerce_body()`, the `{transactionId, <kind>Settings}` envelope, the `?id=`
+parameter and the `set_charge_schedule()` type guard included. Any write path
+whose contract with the library matters belongs there as well as in its
+platform test; a breaking library change should turn it red.
+
 Range validation on writes is fail-closed. `_default_min` / `_default_max` on
 the number entities exist only so the frontend slider has two floats to render
 when the cache is empty — they are **not** charger limits (the reference
