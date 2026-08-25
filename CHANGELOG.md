@@ -6,6 +6,51 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Settings writes now send only the key that changed.** Changing maximum or
+  minimum charging current failed with `HTTP 400 ... "cableSettings" ... is out
+  of range` because the integration rewrote the whole cached settings document,
+  in the GET descriptor shape, on every one-field change. The six number
+  entities and the three OCPP writers (CPMS select, OCPP switch, charge point
+  identifier text) now emit a sparse, flat one-key body via the `*Update` DTOs
+  added in `aioratio` 0.12.0. (#61, #62)
+- **`ratio.set_schedule` no longer sends non-sparse defaults.** It sent
+  `randomizedTimeOffsetEnabled: false` on every call and omitted the
+  `scheduleType` discriminator. It now sends exactly `enabled`,
+  `scheduleType: "WeekSchedule"` and `weekSchedule`, mirroring the app's
+  week-plan screen. Under `aioratio` 0.12.0 the previous call would have raised
+  `TypeError`. (#63)
+- **`number.set_value` validates its input.** Non-finite (`NaN`, `±inf`) and
+  fractional values are refused with a translated `HomeAssistantError` instead
+  of an unhandled traceback, and values outside the setting's `lowerLimit` /
+  `upperLimit` are refused rather than forwarded to the cloud — they are never
+  silently clamped. Validation no longer depends on the coordinator cache being
+  populated; previously an empty cache let a float reach the wire, violating the
+  `Int?` serializer contract. (#64)
+- **`number.set_value` range checking is fail-closed.** With an empty
+  coordinator cache the entity used to validate against its own display
+  fallback constants (`0`-`60`, `6`-`32`), which are not the charger's limits —
+  the reference charger reports an `upperLimit` of 16 for the solar starting
+  currents. An integral value inside the fallback but outside the real limits
+  was accepted and sent. The write is now refused with a new
+  `number_bounds_unknown` error whenever the settings descriptor or either
+  bound is missing. Finiteness and integrality remain unconditional.
+  `native_min_value` / `native_max_value` keep the fallbacks for frontend
+  rendering only.
+- **Number entities go unavailable when the charger's bounds are unknown.**
+  They previously stayed available and advertised the display fallbacks as
+  `min` / `max`, so `number.set_value` answered the same unwritable state with
+  two different errors: Home Assistant's own `out_of_range` for a value outside
+  the fallback (its handler range-checks and clamps before the integration is
+  reached) and `number_bounds_unknown` for one inside it. Entities without both
+  charger bounds are now unavailable, so the write is refused consistently.
+- **Malformed charger bounds are treated as unknown, not authoritative.** A
+  `NaN` upper limit disabled range checking altogether — every comparison
+  against `NaN` is false, so any value passed and was sent to the cloud.
+  Non-finite (`NaN`, `±inf`) and reversed (`lowerLimit` > `upperLimit`) bounds
+  now count as unknown, and non-finite values no longer leak into the entity's
+  `min` / `max` state attributes. Equal bounds (a charger pinned to a single
+  legal value) remain valid.
+
 - BLE poll period read from options is now validated on setup: a corrupt or
   hand-edited stored value (None, non-numeric, zero, negative, or out of the
   1–60 s range) falls back to the 3 s default instead of busy-looping or
@@ -19,6 +64,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Requires `aioratio` 0.12.0 (was 0.11.0). The pin is bumped in
+  `custom_components/ratio/manifest.json` and both `pip install` lines in
+  `.github/workflows/ci.yaml`.
 - The BLE poll-period field in the options flow now uses Home Assistant's
   number/boolean selectors (`NumberSelector`/`BooleanSelector`), making
   `const.py` the single source of the 1–60 s bounds.

@@ -13,12 +13,11 @@ from __future__ import annotations
 # break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
 # the same dynamic-property pattern. The variance error is structurally
 # unavoidable from this side of the HA boundary.
-import dataclasses
 import logging
 from typing import Any
 
 from aioratio import RatioClient
-from aioratio.models import CpmsConfig, InstallerOcppSettings
+from aioratio.models import CpmsConfig, OcppSettingsUpdate
 from homeassistant.components.select import SelectEntity
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
@@ -305,14 +304,14 @@ class RatioCpmsSelect(_RatioSelectBase):
     async def async_select_option(self, option: str) -> None:
         for opt in self._available_options():
             if self._option_label(opt) == option:
-                settings = None
-                if self.coordinator.data is not None:
-                    settings = self.coordinator.data.ocpp_settings.get(self._serial)
-                settings = settings or InstallerOcppSettings()
+                # Sparse PUT: only ``cpms``. ``SetInstallerOcppSettings``
+                # declares all three elements optional and nullable, so
+                # re-sending the cached document would reassert values this
+                # entity does not own.
                 await self.coordinator.request_command(
                     self._client.set_ocpp_settings,
                     self._serial,
-                    dataclasses.replace(settings, cpms=opt),
+                    OcppSettingsUpdate(cpms=opt),
                 )
                 return
         _LOGGER.warning("cpms option %s did not match any known CPMS", option)

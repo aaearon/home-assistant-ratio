@@ -16,7 +16,7 @@ from aioratio.exceptions import (
     RatioConnectionError,
     RatioRateLimitError,
 )
-from aioratio.models import ChargeSchedule, ScheduleSlot, Vehicle
+from aioratio.models import ChargeScheduleUpdate, ScheduleSlot, Vehicle
 from bleak.exc import BleakError
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
@@ -392,7 +392,13 @@ async def _handle_import_session_history(
 async def _handle_set_schedule(hass: HomeAssistant, call: ServiceCall) -> None:
     raw_slots = call.data[ATTR_SLOTS] or []
     slots = [ScheduleSlot.from_dict(s) for s in raw_slots]
-    schedule = ChargeSchedule(enabled=True, slots=slots)
+    # Sparse week-plan PUT, mirroring ``WeekPlanViewModel.java:99``: exactly
+    # ``enabled``, ``scheduleType`` and ``weekSchedule``. Deliberately not a
+    # GET/merge/PUT — merging would carry a stored ``delayedStart`` alongside
+    # the week schedule, and the two are mutually exclusive modes.
+    schedule = ChargeScheduleUpdate(
+        enabled=True, schedule_type="WeekSchedule", slots=slots
+    )
     for entry_id, serial in _resolve_serials(hass, call):
         client, coordinator = _client_and_coordinator(hass, entry_id)
         await coordinator.request_command(client.set_charge_schedule, serial, schedule)

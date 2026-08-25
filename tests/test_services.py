@@ -81,8 +81,14 @@ async def test_set_schedule_calls_client_directly(
     setup_integration: MockConfigEntry,
     mock_ratio_client: MagicMock,
 ) -> None:
-    """_handle_set_schedule should pass client.set_charge_schedule to request_command."""
-    from aioratio.models import ChargeSchedule
+    """set_schedule sends a sparse week-plan update, mirroring the app.
+
+    ``ChargeSchedulePutSettings$$serializer.java`` makes all five elements
+    optional and nullable; ``WeekPlanViewModel.java:99`` sends exactly
+    ``enabled``, ``scheduleType`` and ``weekSchedule``. Under aioratio 0.12.0
+    the GET model ``ChargeSchedule`` is rejected with ``TypeError``.
+    """
+    from aioratio.models import ChargeScheduleUpdate
 
     entry = setup_integration
     client = mock_ratio_client.return_value
@@ -105,7 +111,29 @@ async def test_set_schedule_calls_client_directly(
     client.set_charge_schedule.assert_awaited_once()
     args = client.set_charge_schedule.await_args.args
     assert args[0] == "SN-SCH"
-    assert isinstance(args[1], ChargeSchedule)
+    update = args[1]
+    assert isinstance(update, ChargeScheduleUpdate)
+    slot = {
+        "beginTimeHour": 22,
+        "beginTimeMinute": 0,
+        "endTimeHour": 6,
+        "endTimeMinute": 0,
+    }
+    # Exact body: no randomizedTimeOffsetEnabled, no delayedStart. All seven
+    # day keys are required by ``WeekScheduleSetting$$serializer.java``.
+    assert update.to_dict() == {
+        "enabled": True,
+        "scheduleType": "WeekSchedule",
+        "weekSchedule": {
+            "monday": [slot],
+            "tuesday": [],
+            "wednesday": [],
+            "thursday": [],
+            "friday": [],
+            "saturday": [],
+            "sunday": [],
+        },
+    }
 
 
 @pytest.mark.asyncio
@@ -234,7 +262,7 @@ async def test_set_schedule_accepts_single_digit_hour_and_zero_pads(
     through aioratio fine; the schema must keep accepting it (and zero-pad
     before the cloud call) instead of breaking existing automations.
     """
-    from aioratio.models import ChargeSchedule
+    from aioratio.models import ChargeScheduleUpdate
 
     entry = setup_integration
     device = device_registry.async_get_or_create(
@@ -254,10 +282,19 @@ async def test_set_schedule_accepts_single_digit_hour_and_zero_pads(
 
     client = mock_ratio_client.return_value
     client.set_charge_schedule.assert_awaited_once()
-    schedule: ChargeSchedule = client.set_charge_schedule.await_args.args[1]
-    slot = schedule.slots[0]
+    update: ChargeScheduleUpdate = client.set_charge_schedule.await_args.args[1]
+    assert update.slots is not None
+    slot = update.slots[0]
     assert slot.start == "07:00"
     assert slot.end == "09:30"
+    assert update.to_dict()["weekSchedule"]["monday"] == [
+        {
+            "beginTimeHour": 7,
+            "beginTimeMinute": 0,
+            "endTimeHour": 9,
+            "endTimeMinute": 30,
+        }
+    ]
 
 
 @pytest.mark.asyncio
