@@ -26,6 +26,16 @@ All notable changes to this project will be documented in this file.
   silently clamped. Validation no longer depends on the coordinator cache being
   populated; previously an empty cache let a float reach the wire, violating the
   `Int?` serializer contract. (#64)
+- **`number.set_value` range checking is fail-closed.** With an empty
+  coordinator cache the entity used to validate against its own display
+  fallback constants (`0`-`60`, `6`-`32`), which are not the charger's limits —
+  the reference charger reports an `upperLimit` of 16 for the solar starting
+  currents. An integral value inside the fallback but outside the real limits
+  was accepted and sent. The write is now refused with a new
+  `number_bounds_unknown` error whenever the settings descriptor or either
+  bound is missing. Finiteness and integrality remain unconditional.
+  `native_min_value` / `native_max_value` keep the fallbacks for frontend
+  rendering only.
 
 - BLE poll period read from options is now validated on setup: a corrupt or
   hand-edited stored value (None, non-numeric, zero, negative, or out of the

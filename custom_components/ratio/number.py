@@ -91,7 +91,10 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
     _field: str  # attribute name on the settings dataclass
     _key: str  # unique-id / translation key
 
-    # Default fallbacks if lower/upper are missing.
+    # Display-only fallbacks for the frontend slider when lower/upper are
+    # missing. HA types native_min_value/native_max_value as plain ``float``,
+    # so there is no way to say "unknown" there. These are NOT charger limits
+    # and must never be used to validate a write — see ``_bounds()``.
     _default_min: float = 0.0
     _default_max: float = 100.0
     _default_step: float = 1.0
@@ -130,6 +133,21 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
             return None
         return getattr(s, self._field, None)
 
+    def _bounds(self) -> tuple[float, float] | None:
+        """Return the charger-reported ``(lower, upper)`` pair, or ``None``.
+
+        This is the only bounds source the write path may use. The
+        ``_default_min``/``_default_max`` class constants are display
+        scaffolding, not charger limits — the reference charger reports an
+        ``upperLimit`` of 16 for the solar starting currents while the
+        constant says 32 — so validating a write against them would accept
+        values the cloud never would.
+        """
+        lim = self._limit()
+        if lim is None or lim.lower is None or lim.upper is None:
+            return None
+        return lim.lower, lim.upper
+
     # ---- properties ----
 
     @property
@@ -164,9 +182,14 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
 
         Every cloud PUT field behind these entities is typed ``Int?`` in the
         Kotlin serializers, so a fractional or non-finite value cannot be
-        represented on the wire at all. The checks deliberately do **not**
-        consult the coordinator cache: with an empty cache the old code
-        skipped integrality entirely and let a float reach the API.
+        represented on the wire at all. Those two checks deliberately do
+        **not** consult the coordinator cache: with an empty cache the old
+        code skipped integrality entirely and let a float reach the API.
+
+        The range check is fail-closed instead. It needs the charger's own
+        ``lowerLimit``/``upperLimit``, so when the settings descriptor (or
+        either bound) is missing the write is refused rather than checked
+        against the display fallbacks.
         """
         if not math.isfinite(value):
             raise HomeAssistantError(
@@ -181,8 +204,14 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
                 translation_placeholders={"setting": self._key, "value": str(value)},
             )
         as_int = int(value)
-        minimum = self.native_min_value
-        maximum = self.native_max_value
+        bounds = self._bounds()
+        if bounds is None:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="number_bounds_unknown",
+                translation_placeholders={"setting": self._key, "value": str(as_int)},
+            )
+        minimum, maximum = bounds
         if as_int < minimum or as_int > maximum:
             # Refuse rather than clamp: an external controller has to be told
             # its request was not applied.

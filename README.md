@@ -263,6 +263,13 @@ the current screen changed. Write paths therefore use the `*Update` DTOs
 asserts the exact body, and its keys come from the matching
 `$$serializer.java` in the decompiled app, never from recollection.
 
+Range validation on writes is fail-closed. `_default_min` / `_default_max` on
+the number entities exist only so the frontend slider has two floats to render
+when the cache is empty — they are **not** charger limits (the reference
+charger reports `upperLimit` 16 where the constant says 32). Writes validate
+against `_bounds()`, which returns the charger's own `lowerLimit`/`upperLimit`
+or `None`, and a `None` refuses the write with `number_bounds_unknown`.
+
 ## Notes for contributors
 
 The integration is intentionally a thin shell over [`aioratio`](https://github.com/aaearon/aioratio). If you find yourself reaching for `boto3`, `warrant`, or HTTP code inside this repo, that work belongs in the library, not here.

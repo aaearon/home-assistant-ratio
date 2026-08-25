@@ -313,16 +313,122 @@ async def test_validation_does_not_depend_on_the_cached_settings(value) -> None:
     coord.request_command.assert_not_called()
 
 
+# ---- Fail-closed range validation ----
+#
+# ``_default_min``/``_default_max`` are display scaffolding for the frontend
+# slider, not charger limits: the reference charger reports ``upperLimit`` 16
+# for the solar starting currents while the class constant says 32. A write
+# validated against those constants can therefore be accepted here and
+# rejected (or silently clamped) by the cloud. The write path must refuse
+# whenever the real bounds are unknown.
+
+
+@pytest.mark.parametrize("value", [6.0, 16.0, 24.0])
 @pytest.mark.asyncio
-async def test_write_works_with_an_empty_cache() -> None:
-    """A valid value still writes when the coordinator has no settings yet."""
+async def test_empty_cache_rejects_the_write(value) -> None:
+    """With no cached settings the charger's bounds are unknown: fail closed."""
     coord = _make_coordinator(None, None)
     client = MagicMock()
     client.set_user_settings = AsyncMock()
 
     entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
-    await entity.async_set_native_value(16.0)
+    with pytest.raises(HomeAssistantError) as err:
+        await entity.async_set_native_value(value)
 
-    update = client.set_user_settings.call_args[0][1]
-    assert isinstance(update, UserSettingsUpdate)
-    assert update.to_dict() == {"maximumChargingCurrent": 16}
+    assert err.value.translation_key == "number_bounds_unknown"
+    client.set_user_settings.assert_not_called()
+    coord.request_command.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_empty_cache_rejects_a_value_the_fallback_would_have_accepted() -> None:
+    """24 A sits inside the fictional 6-32 fallback but above the real 16 A.
+
+    This is the exact hole the fallback opened: an integral, in-``_default_max``
+    value that the charger would never accept.
+    """
+    coord = _make_coordinator(None, None)
+    client = MagicMock()
+    client.set_solar_settings = AsyncMock()
+
+    entity = RatioPureSolarStartingCurrentNumber(coord, client, SERIAL)
+    assert entity._default_max == 32.0  # the value 24 would have passed
+    with pytest.raises(HomeAssistantError) as err:
+        await entity.async_set_native_value(24.0)
+
+    assert err.value.translation_key == "number_bounds_unknown"
+    client.set_solar_settings.assert_not_called()
+    coord.request_command.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_populated_cache_rejects_the_same_value_as_out_of_range() -> None:
+    """Same 24 A, real bounds 6-16 known: rejected, but as a range error."""
+    coord = _make_coordinator(_solar(), _user())
+    client = MagicMock()
+    client.set_solar_settings = AsyncMock()
+
+    entity = RatioPureSolarStartingCurrentNumber(coord, client, SERIAL)
+    with pytest.raises(HomeAssistantError) as err:
+        await entity.async_set_native_value(24.0)
+
+    assert err.value.translation_key == "number_value_out_of_range"
+    client.set_solar_settings.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "lower,upper",
+    [(None, 32.0), (6.0, None), (None, None)],
+)
+@pytest.mark.asyncio
+async def test_a_missing_bound_rejects_the_write(lower, upper) -> None:
+    """A half-populated descriptor is still "bounds unknown"."""
+    user = UserSettings(
+        maximum_charging_current=UpperLowerLimitSetting(
+            value=16.0, lower=lower, upper=upper
+        ),
+    )
+    coord = _make_coordinator(None, user)
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    with pytest.raises(HomeAssistantError) as err:
+        await entity.async_set_native_value(16.0)
+
+    assert err.value.translation_key == "number_bounds_unknown"
+    client.set_user_settings.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_finiteness_and_integrality_still_precede_the_bounds_check() -> None:
+    """An empty cache must not mask the unconditional Int? checks."""
+    coord = _make_coordinator(None, None)
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    with pytest.raises(HomeAssistantError) as err:
+        await entity.async_set_native_value(6.5)
+    assert err.value.translation_key == "number_value_not_integer"
+
+    with pytest.raises(HomeAssistantError) as err:
+        await entity.async_set_native_value(float("nan"))
+    assert err.value.translation_key == "number_value_not_finite"
+
+    client.set_user_settings.assert_not_called()
+
+
+def test_display_bounds_keep_the_class_fallbacks() -> None:
+    """The frontend slider still needs two floats when the cache is empty.
+
+    ``native_min_value``/``native_max_value`` are typed ``float`` by HA and
+    cannot express "unknown"; the entity is unavailable in this state anyway,
+    so the fallbacks stay for rendering only. The write path does not use them.
+    """
+    coord = _make_coordinator(None, None)
+    entity = RatioPureSolarStartingCurrentNumber(coord, MagicMock(), SERIAL)
+
+    assert entity.available is False
+    assert entity.native_min_value == 6.0
+    assert entity.native_max_value == 32.0

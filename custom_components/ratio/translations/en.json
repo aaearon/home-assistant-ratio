@@ -239,6 +239,9 @@
     },
     "number_value_out_of_range": {
       "message": "{setting}: {value} is outside the allowed range {minimum}-{maximum}; the request was not applied."
+    },
+    "number_bounds_unknown": {
+      "message": "{setting}: the charger has not reported the allowed range for this setting yet, so {value} was not sent. Wait for the next update from the charger and try again."
     }
   },
   "services": {
