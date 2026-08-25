@@ -108,6 +108,9 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
         super().__init__(coordinator)
         self._client = client
         self._serial = serial
+        # Value of the last successful PUT, until the next coordinator update
+        # replaces the cache it was written against. See ``_is_noop()``.
+        self._pending_target: int | None = None
         self._attr_unique_id = f"{serial}_{self._key}"
         self._attr_translation_key = self._key
         self._attr_device_info = DeviceInfo(
@@ -274,12 +277,59 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
             )
         return as_int
 
+    def _is_noop(self, validated: int) -> bool:
+        """Whether ``validated`` is already the value this entity holds.
+
+        Two sources, in this order:
+
+        * A **pending target** — the value of the last successful PUT that no
+          coordinator update has yet superseded. While one exists the cache is
+          known-stale and must not be consulted at all: with a cache of 16 and
+          a pending 20, a request for 16 is a real change, not a no-op.
+        * The **cached value**. Only a finite number can be compared
+          (``aioratio`` parses the value with a bare ``float()`` and
+          ``_bounds()`` checks the finiteness of the limits, not the value, so
+          an available entity can hold ``NaN``), and ``16 == 16.0`` is
+          ``True``, so no normalisation is needed against the validated int. A
+          non-integral cache (``6.5``) never equals an integral request.
+
+        Anything unknown falls through to sending: the failure mode of a
+        needless PUT is far cheaper than the failure mode of a swallowed one.
+        """
+        if self._pending_target is not None:
+            return self._pending_target == validated
+        current = self.native_value
+        if current is None or not math.isfinite(current):
+            return False
+        return current == validated
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Drop the pending target, then write state as usual.
+
+        Cleared on the *next* update rather than on reconciliation with the
+        reported value: that bounds suppression to at most one refresh cycle
+        and fails toward sending, so a write that never landed server-side is
+        retried instead of being suppressed forever by a target that will
+        never arrive.
+        """
+        self._pending_target = None
+        super()._handle_coordinator_update()
+
     async def async_set_native_value(self, value: float) -> None:
         validated = self._validate(value)
+        # Strictly after ``_validate``: an out-of-range or non-integral
+        # request must still be *reported* as invalid, never silently
+        # swallowed because it happened to match the cache.
+        if self._is_noop(validated):
+            return
         if self._settings_parent == "solar":
             await self._set_solar(validated)
         else:
             await self._set_user(validated)
+        # Only a successful PUT arms suppression; a raised error leaves the
+        # entity free to retry.
+        self._pending_target = validated
 
     async def _set_solar(self, value: int) -> None:
         """PUT only the key this entity owns.

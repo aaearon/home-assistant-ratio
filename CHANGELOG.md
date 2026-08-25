@@ -25,6 +25,27 @@ All notable changes to this project will be documented in this file.
   `LockAlways` in particular — is uncharacterised and has not been verified on
   a live charger. (#76)
 
+### Fixed
+
+- **A `number.set_value` asking for the value the entity already holds no
+  longer PUTs to the cloud.** An external controller re-asserting its target
+  faster than the cloud settles produced a PUT on every tick: a write takes
+  3-6 s to become readable and the confirming refresh waits 10 s, so the
+  cached value could not catch up and every repeat looked like a change.
+  Writes are now suppressed against the cached value *and* against a pending
+  target — the value of the last successful PUT, dropped on the next
+  coordinator update so a write that never landed server-side is still
+  retried. Suppression runs after validation, so an out-of-range or
+  non-integral request is still reported as invalid rather than swallowed,
+  and a `NaN`, missing, or non-integral cached value falls through to
+  sending. All six number entities are covered: the
+  `maximumChargingCurrent` → `smartSolarStartingCurrent` cascade was verified
+  on a live charger to be triggered by a *change*, not by the PUT, so
+  re-writing the current value moves nothing. Caveat: the coordinator carries
+  a settings document forward when its fetch fails, so a value changed in the
+  Ratio app while that fetch is failing can be suppressed against a stale
+  cache — see the README's known limitations. (#66)
+
 ## [0.14.1] — 2026-08-25
 
 ### Fixed

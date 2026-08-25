@@ -190,7 +190,8 @@ Replace `<serial>` with your charger's serial number (lowercase); find actual en
 - **Password storage**: stored in HA config entry data and persisted in `.storage/core.config_entries` like other config entry data. It does not use `secrets.yaml`, and protection relies on Home Assistant host security rather than separate encryption in this integration.
 - **Account-level services require a single config entry.** `add_vehicle`, `remove_vehicle`, and `import_session_history` raise an error if multiple Ratio config entries exist, since they operate on the account level and there is no device picker to disambiguate.
 - **Rate limiting**: The Ratio cloud API enforces rate limits. The integration handles 429 responses with automatic backoff, but aggressive polling or frequent command calls may trigger temporary throttling.
-- **Changing the maximum charging current can silently lower the smart-solar starting current.** In one observed case, a `maximumChargingCurrent` write of 16 → 15 A also rewrote `smartSolarStartingCurrent` from 16 to 15 A server-side, and restoring the maximum to 16 A did **not** restore it. The cascade happens in the Ratio cloud and cannot be prevented from HA. This is a single observation — the clamping rule (which values trigger it, and how the new value is derived) is not characterised. If you rely on a specific smart-solar starting current, write it explicitly after changing the maximum charging current.
+- **Changing the maximum charging current can silently lower the smart-solar starting current.** The charger derives `smartSolarStartingCurrent`'s own `upperLimit` from `maximumChargingCurrent`, so lowering the maximum tightens that bound and clamps the smart-solar value into it: a `maximumChargingCurrent` write of 16 → 15 A drops `smartSolarStartingCurrent` from 16 to 15 A *and* moves its reported `upperLimit` from 16 to 15. Raising the maximum again reopens the bound but does **not** restore the clamped value. The cascade happens in the Ratio cloud and cannot be prevented from HA. It is triggered by a *change*, not by the PUT itself — re-writing the maximum's current value moves nothing. If you rely on a specific smart-solar starting current, write it explicitly after changing the maximum charging current.
+- **A stale cache can suppress a needed write.** Writes that request the value the entity already reports are not sent to the cloud (#66). The coordinator carries `user_settings` / `solar_settings` forward per-charger when their fetch fails, and those failures are only debug-logged, so if a setting is changed in the Ratio app while HA's fetch for that document is failing, HA keeps reporting the old value and will silently suppress a `number.set_value` requesting it — returning success without correcting the charger. There is no `force` escape hatch, no time bound on the cache, and no freshness flag; the next successful refresh clears the condition. Note this is **weaker** than the equivalent guard on the `charging` switch, which suppresses against the charger overview and goes *unavailable* when that overview is absent — its state is fresh or absent, never silently stale. The number entities have no such protection.
 - **DSO power reduction is read-only.** The `power_reduced_by_dso` binary sensor reflects whether the Distribution System Operator has reduced available power, but this cannot be controlled from HA — it is set by the DSO via the charger's smart grid interface.
 - **`import_session_history` rejects already-processed windows.** If `begin_time` predates the history-import baseline (latest imported session timestamp, advanced by the live polling coordinator) for any charger, the service raises `ServiceValidationError`. This prevents non-monotonic energy statistics that would result from backfilling sessions earlier than the baseline. Workaround: re-add the integration to reset the baseline before backfilling.
 
@@ -324,14 +325,43 @@ execute lock keeps serialising refreshes. It is cancelled on entry unload
 (`async_shutdown`, which the coordinator registers via
 `config_entry.async_on_unload`) so it can never fire through a closed client.
 
-The cloud also applies its own cross-document cascades: lowering
-`userSettings.maximumChargingCurrent` was observed to lower
-`solarSettings.smartSolarStartingCurrent` to match, one-directionally — raising
-the maximum again did not restore it. Nothing is sent for the second document;
-the server rewrites it. This is why the post-write refresh must re-read *all*
-settings documents rather than only the one written, and why no optimistic
-state is set for the cascaded value: the clamping rule is uncharacterised, so
-any predicted value would be a guess.
+The cloud also applies its own cross-document cascades. The charger derives
+`solarSettings.smartSolarStartingCurrent`'s `upperLimit` from
+`userSettings.maximumChargingCurrent`, so lowering the maximum tightens that
+bound and clamps the smart-solar value into it — one-directionally: raising the
+maximum reopens the bound but does not restore the clamped value. Nothing is
+sent for the second document; the server rewrites it. This is why the
+post-write refresh must re-read *all* settings documents rather than only the
+one written, and why no optimistic state is set for the cascaded value: the
+write path knows the new bound only once the refresh reports it.
+
+A write asking for the value the entity already holds is suppressed before it
+reaches the cloud (#66). The comparison is against the *validated int*, and it
+runs strictly after `_validate()`, so an out-of-range or non-integral request
+is still reported as invalid rather than silently swallowed by matching the
+cache. Two sources feed it, in order:
+
+1. A **pending target** — the value of the last successful PUT. While one
+   exists the cache is known-stale and is not consulted at all (cache 16 plus a
+   pending 20 makes a request for 16 a real change). It is cleared on the next
+   coordinator update, whatever that update reports: suppression is therefore
+   bounded to at most one refresh cycle, and a write that never landed
+   server-side is retried rather than suppressed forever. Without it the
+   headline case stays broken — a PUT takes 3-6 s to become readable and the
+   confirming refresh waits 10 s, so a controller re-asserting its target
+   faster than that would PUT on every tick while the cache still held the old
+   value.
+2. The **cached value**, when it is a finite number equal to the request.
+   `_bounds()` checks the finiteness of the *limits*, not of the value, so an
+   available entity can hold `NaN`; a `NaN`, a missing, or a non-integral
+   cached value all fall through to sending.
+
+Suppression is safe on all six number entities, including
+`maximum_charging_current`: the `smartSolarStartingCurrent` cascade is
+change-triggered, not PUT-triggered — re-writing the maximum's current value
+was verified on a live charger to move nothing, not even the smart-solar
+entity's `last_updated`. Nothing is returned to the caller; a suppressed write
+succeeds silently.
 
 ## Notes for contributors
 

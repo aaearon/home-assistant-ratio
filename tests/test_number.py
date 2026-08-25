@@ -233,10 +233,12 @@ async def test_write_emits_json_int_not_float() -> None:
     client.set_user_settings = AsyncMock()
 
     entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
-    await entity.async_set_native_value(16.0)
+    # Differs from the cached 16.0 so the no-op suppression (#66) does not
+    # swallow the write; the point of the test is the wire type, not the value.
+    await entity.async_set_native_value(20.0)
 
     body = client.set_user_settings.call_args[0][1].to_dict()
-    assert body == {"maximumChargingCurrent": 16}
+    assert body == {"maximumChargingCurrent": 20}
     assert type(body["maximumChargingCurrent"]) is int
 
 
@@ -884,3 +886,327 @@ async def test_post_write_refresh_lands_after_cloud_propagation(
 
     await hass.config_entries.async_unload(mock_config_entry.entry_id)
     await hass.async_block_till_done()
+
+
+# ---------------------------------------------------------------------------
+# No-op write suppression (issue #66)
+# ---------------------------------------------------------------------------
+#
+# A ``number.set_value`` asking for the value the entity already holds must not
+# reach the cloud. A same-value PUT was verified inert on the live charger
+# (`maximumChargingCurrent` re-written to the value it already held did not
+# re-trigger the `smartSolarStartingCurrent` cascade, and moved nothing), so
+# suppression applies to every number entity with no exclusions.
+#
+# Suppression is compared against the *validated int*, and runs strictly after
+# ``_validate()`` so an invalid request is still reported as invalid rather
+# than silently swallowed.
+
+
+@pytest.mark.parametrize(
+    "cls,setter,cached",
+    [
+        (RatioSunOnDelayMinutesNumber, "set_solar_settings", 2.0),
+        (RatioSunOffDelayMinutesNumber, "set_solar_settings", 3.0),
+        (RatioPureSolarStartingCurrentNumber, "set_solar_settings", 6.0),
+        (RatioSmartSolarStartingCurrentNumber, "set_solar_settings", 8.0),
+        (RatioMaximumChargingCurrentNumber, "set_user_settings", 16.0),
+        (RatioMinimumChargingCurrentNumber, "set_user_settings", 6.0),
+    ],
+)
+@pytest.mark.asyncio
+async def test_writing_the_cached_value_suppresses_the_put(cls, setter, cached) -> None:
+    """The value the entity already holds is not re-sent."""
+    coord = _make_coordinator(_solar(), _user())
+    client = MagicMock()
+    setattr(client, setter, AsyncMock())
+
+    entity = cls(coord, client, SERIAL)
+    assert entity.native_value == cached
+
+    await entity.async_set_native_value(cached)
+
+    getattr(client, setter).assert_not_awaited()
+    coord.request_command.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "cls,setter,cached",
+    [
+        (RatioSunOnDelayMinutesNumber, "set_solar_settings", 2.0),
+        (RatioSunOffDelayMinutesNumber, "set_solar_settings", 3.0),
+        (RatioPureSolarStartingCurrentNumber, "set_solar_settings", 6.0),
+        (RatioSmartSolarStartingCurrentNumber, "set_solar_settings", 8.0),
+        (RatioMaximumChargingCurrentNumber, "set_user_settings", 16.0),
+        (RatioMinimumChargingCurrentNumber, "set_user_settings", 6.0),
+    ],
+)
+@pytest.mark.asyncio
+async def test_writing_a_different_value_still_sends(cls, setter, cached) -> None:
+    """Guard against over-suppression: a real change must still go out."""
+    coord = _make_coordinator(_solar(), _user())
+    client = MagicMock()
+    setattr(client, setter, AsyncMock())
+
+    entity = cls(coord, client, SERIAL)
+    await entity.async_set_native_value(cached + 1.0)
+
+    getattr(client, setter).assert_awaited_once()
+    coord.request_command.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_two_identical_writes_of_a_new_value_send_one_put() -> None:
+    """Issue #66's headline case.
+
+    The cloud takes 3-6 s to make a PUT readable and the confirming refresh
+    waits 10 s, so a controller re-asserting its target faster than that used
+    to PUT on every tick while the cache still held the old value. The
+    pending target closes that window.
+    """
+    coord = _make_coordinator(_solar(), _user())
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    assert entity.native_value == 16.0
+
+    await entity.async_set_native_value(20.0)
+    await entity.async_set_native_value(20.0)
+
+    # The cache still says 16.0 — only the pending target can suppress this.
+    assert entity.native_value == 16.0
+    client.set_user_settings.assert_awaited_once()
+    assert coord.request_command.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_coordinator_update_clears_the_pending_target() -> None:
+    """Suppression is bounded to one refresh cycle and fails toward sending.
+
+    A write that never landed server-side must be retried rather than
+    suppressed forever, so the pending target is dropped on the next
+    coordinator update regardless of what that update reported.
+    """
+    coord = _make_coordinator(_solar(), _user())
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    await entity.async_set_native_value(20.0)
+    assert client.set_user_settings.await_count == 1
+
+    # A refresh landed; it still reports the old value (the PUT did not stick).
+    entity.async_write_ha_state = MagicMock()
+    entity._handle_coordinator_update()
+
+    await entity.async_set_native_value(20.0)
+    assert client.set_user_settings.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failed_write_leaves_no_pending_target() -> None:
+    """Only a *successful* PUT arms suppression."""
+    coord = _make_coordinator(_solar(), _user())
+    client = MagicMock()
+    client.set_user_settings = AsyncMock(side_effect=HomeAssistantError("boom"))
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    with pytest.raises(HomeAssistantError):
+        await entity.async_set_native_value(20.0)
+
+    client.set_user_settings = AsyncMock()
+    await entity.async_set_native_value(20.0)
+    client.set_user_settings.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_pending_target_takes_precedence_over_the_stale_cache() -> None:
+    """Once a write is in flight the cache is known-stale and must not suppress.
+
+    Cache 16, write 20, then write 16 back: the charger is at 20, so the 16
+    is a real change and has to go out even though it equals the cache.
+    """
+    coord = _make_coordinator(_solar(), _user())
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    await entity.async_set_native_value(20.0)
+    await entity.async_set_native_value(16.0)
+
+    assert client.set_user_settings.await_count == 2
+    assert client.set_user_settings.call_args[0][1].to_dict() == {
+        "maximumChargingCurrent": 16
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_nan_cached_value_still_sends() -> None:
+    """``_bounds()`` checks the limits' finiteness, never the value's.
+
+    ``aioratio`` parses the value with a bare ``float()``, so an *available*
+    entity can hold ``NaN``. Every comparison against it is ``False``, but
+    make the finiteness check explicit rather than leaning on that.
+    """
+    user = UserSettings(
+        maximum_charging_current=UpperLowerLimitSetting(
+            value=_NAN, lower=6.0, upper=32.0
+        ),
+    )
+    coord = _make_coordinator(None, user)
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    assert entity.available is True
+    assert math.isnan(entity.native_value)
+
+    await entity.async_set_native_value(16.0)
+    client.set_user_settings.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_non_integral_cached_value_still_sends() -> None:
+    """``6`` is not ``6.5``: writing the integral neighbour is a real change."""
+    user = UserSettings(
+        maximum_charging_current=UpperLowerLimitSetting(
+            value=6.5, lower=6.0, upper=32.0
+        ),
+    )
+    coord = _make_coordinator(None, user)
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    await entity.async_set_native_value(6.0)
+
+    assert client.set_user_settings.call_args[0][1].to_dict() == {
+        "maximumChargingCurrent": 6
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_missing_cached_value_still_sends() -> None:
+    """Bounds present, ``value`` absent: nothing to compare against, so send."""
+    user = UserSettings(
+        maximum_charging_current=UpperLowerLimitSetting(
+            value=None, lower=6.0, upper=32.0
+        ),
+    )
+    coord = _make_coordinator(None, user)
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    assert entity.available is True
+    assert entity.native_value is None
+
+    await entity.async_set_native_value(16.0)
+    client.set_user_settings.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_validation_precedes_suppression_for_an_out_of_range_value() -> None:
+    """An invalid request is reported as invalid, not silently swallowed."""
+    user = UserSettings(
+        maximum_charging_current=UpperLowerLimitSetting(
+            value=20.0, lower=6.0, upper=16.0
+        ),
+    )
+    coord = _make_coordinator(None, user)
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    assert entity.native_value == 20.0
+    with pytest.raises(HomeAssistantError) as err:
+        await entity.async_set_native_value(20.0)
+
+    assert err.value.translation_key == "number_value_out_of_range"
+    client.set_user_settings.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_validation_precedes_suppression_for_a_non_integral_value() -> None:
+    coord = _make_coordinator(
+        None,
+        UserSettings(
+            maximum_charging_current=UpperLowerLimitSetting(
+                value=6.5, lower=6.0, upper=32.0
+            ),
+        ),
+    )
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    with pytest.raises(HomeAssistantError) as err:
+        await entity.async_set_native_value(6.5)
+
+    assert err.value.translation_key == "number_value_not_integer"
+    client.set_user_settings.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_service_call_suppresses_a_write_of_the_current_value(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """End to end: nothing is written and no settle refresh is armed."""
+    coordinator = setup_integration.runtime_data.coordinator
+    client = mock_ratio_client.return_value
+
+    _push(coordinator, _user())
+    await hass.async_block_till_done()
+    assert hass.states.get(_SERVICE_ENTITY_ID).state == "16.0"
+
+    coordinator._schedule_settle_refresh = MagicMock()
+
+    await hass.services.async_call(
+        "number",
+        "set_value",
+        {"entity_id": _SERVICE_ENTITY_ID, "value": 16},
+        blocking=True,
+    )
+
+    client.set_user_settings.assert_not_called()
+    coordinator._schedule_settle_refresh.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_service_call_repeating_a_new_value_writes_once(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """End to end for #66: a controller re-asserting its target PUTs once."""
+    coordinator = setup_integration.runtime_data.coordinator
+    client = mock_ratio_client.return_value
+
+    _push(coordinator, _user())
+    await hass.async_block_till_done()
+
+    for _ in range(3):
+        await hass.services.async_call(
+            "number",
+            "set_value",
+            {"entity_id": _SERVICE_ENTITY_ID, "value": 20},
+            blocking=True,
+        )
+
+    client.set_user_settings.assert_awaited_once()
+
+    # The next refresh clears the pending target, so a still-unapplied write
+    # is retried rather than suppressed forever.
+    _push(coordinator, _user())
+    await hass.async_block_till_done()
+
+    await hass.services.async_call(
+        "number",
+        "set_value",
+        {"entity_id": _SERVICE_ENTITY_ID, "value": 20},
+        blocking=True,
+    )
+    assert client.set_user_settings.await_count == 2
