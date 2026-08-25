@@ -230,6 +230,15 @@
     },
     "ble_connect_failed": {
       "message": "Could not connect to charger {serial} via Bluetooth: {error}"
+    },
+    "number_value_not_finite": {
+      "message": "{setting}: {value} is not a finite number."
+    },
+    "number_value_not_integer": {
+      "message": "{setting}: {value} must be a whole number; this setting only accepts integers."
+    },
+    "number_value_out_of_range": {
+      "message": "{setting}: {value} is outside the allowed range {minimum}-{maximum}; the request was not applied."
     }
   },
   "services": {

@@ -13,15 +13,16 @@ from __future__ import annotations
 # break tests. Official HA core integrations (fyta, reolink, snoo, etc.) use
 # the same dynamic-property pattern. The variance error is structurally
 # unavoidable from this side of the HA boundary.
-from dataclasses import replace
+import math
 from typing import Any
 
 from aioratio import RatioClient
-from aioratio.models import SolarSettings, UserSettings
+from aioratio.models import SolarSettingsUpdate, UserSettingsUpdate
 from aioratio.models.settings import UpperLowerLimitSetting
 from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.const import EntityCategory, UnitOfElectricCurrent, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -158,62 +159,86 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
 
     # ---- writes ----
 
-    async def async_set_native_value(self, value: float) -> None:
-        if self._settings_parent == "solar":
-            await self._set_solar(value)
-        else:
-            await self._set_user(value)
+    def _validate(self, value: float) -> int:
+        """Return ``value`` as an ``int``, or raise ``HomeAssistantError``.
 
-    async def _set_solar(self, value: float) -> None:
-        current: SolarSettings | None = (
-            self.coordinator.data.solar_settings.get(self._serial)
-            if self.coordinator.data is not None
-            else None
-        )
-        if current is None:
-            current = SolarSettings()
-        existing = getattr(current, self._field, None)
-        if isinstance(existing, UpperLowerLimitSetting):
-            new_field = replace(existing, value=value)
+        Every cloud PUT field behind these entities is typed ``Int?`` in the
+        Kotlin serializers, so a fractional or non-finite value cannot be
+        represented on the wire at all. The checks deliberately do **not**
+        consult the coordinator cache: with an empty cache the old code
+        skipped integrality entirely and let a float reach the API.
+        """
+        if not math.isfinite(value):
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="number_value_not_finite",
+                translation_placeholders={"setting": self._key, "value": str(value)},
+            )
+        if not float(value).is_integer():
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="number_value_not_integer",
+                translation_placeholders={"setting": self._key, "value": str(value)},
+            )
+        as_int = int(value)
+        minimum = self.native_min_value
+        maximum = self.native_max_value
+        if as_int < minimum or as_int > maximum:
+            # Refuse rather than clamp: an external controller has to be told
+            # its request was not applied.
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="number_value_out_of_range",
+                translation_placeholders={
+                    "setting": self._key,
+                    "value": str(as_int),
+                    "minimum": str(minimum),
+                    "maximum": str(maximum),
+                },
+            )
+        return as_int
+
+    async def async_set_native_value(self, value: float) -> None:
+        validated = self._validate(value)
+        if self._settings_parent == "solar":
+            await self._set_solar(validated)
         else:
-            new_field = UpperLowerLimitSetting(value=value)
+            await self._set_user(validated)
+
+    async def _set_solar(self, value: int) -> None:
+        """PUT only the key this entity owns.
+
+        ``SetSolarSettings$$serializer.java`` declares all four elements
+        optional and nullable, and the app omits everything the current screen
+        did not change. Sending the whole cached document instead re-asserts
+        stale values and races other writers.
+        """
         match self._field:
             case "sun_on_delay_minutes":
-                modified = replace(current, sun_on_delay_minutes=new_field)
+                update = SolarSettingsUpdate(sun_on_delay_minutes=value)
             case "sun_off_delay_minutes":
-                modified = replace(current, sun_off_delay_minutes=new_field)
+                update = SolarSettingsUpdate(sun_off_delay_minutes=value)
             case "pure_solar_starting_current":
-                modified = replace(current, pure_solar_starting_current=new_field)
+                update = SolarSettingsUpdate(pure_solar_starting_current=value)
             case "smart_solar_starting_current":
-                modified = replace(current, smart_solar_starting_current=new_field)
+                update = SolarSettingsUpdate(smart_solar_starting_current=value)
             case _:
                 raise ValueError(f"Unknown solar field: {self._field}")
         await self.coordinator.request_command(
-            self._client.set_solar_settings, self._serial, modified
+            self._client.set_solar_settings, self._serial, update
         )
 
-    async def _set_user(self, value: float) -> None:
-        current: UserSettings | None = (
-            self.coordinator.data.user_settings.get(self._serial)
-            if self.coordinator.data is not None
-            else None
-        )
-        if current is None:
-            current = UserSettings()
-        existing = getattr(current, self._field, None)
-        if isinstance(existing, UpperLowerLimitSetting):
-            new_field = replace(existing, value=value)
-        else:
-            new_field = UpperLowerLimitSetting(value=value)
+    async def _set_user(self, value: int) -> None:
+        """PUT only the key this entity owns (``SetUserSettings$$serializer``)."""
         match self._field:
             case "maximum_charging_current":
-                modified = replace(current, maximum_charging_current=new_field)
+                update = UserSettingsUpdate(maximum_charging_current=value)
             case "minimum_charging_current":
-                modified = replace(current, minimum_charging_current=new_field)
+                update = UserSettingsUpdate(minimum_charging_current=value)
             case _:
                 raise ValueError(f"Unknown user field: {self._field}")
         await self.coordinator.request_command(
-            self._client.set_user_settings, self._serial, modified
+            self._client.set_user_settings, self._serial, update
         )
 
 
