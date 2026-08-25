@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-08-25
+
 ### Added
 
 - **`ratio.set_schedule` accepts an `enabled` flag.** The service hardcoded
