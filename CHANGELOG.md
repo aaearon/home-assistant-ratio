@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-08-25
+
 ### Fixed
 
 - **`select.<charger>_charge_mode` no longer offers a write a locked charger
