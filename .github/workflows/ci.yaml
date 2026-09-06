@@ -46,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rm -rf tests
-      - uses: home-assistant/actions/hassfest@e91ad1948e57189485b9c1ad608af0c303946f89 # master
+      - uses: home-assistant/actions/hassfest@a7c616ce81ccda50150bf1595786c71b1883fabb # master
 
   hacs:
     name: HACS (store layout validation)
