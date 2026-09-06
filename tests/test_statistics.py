@@ -42,6 +42,9 @@ def test_metadata_is_consistent() -> None:
     assert meta["unit_of_measurement"] == "Wh"
     assert meta["has_sum"] is True
     assert meta["has_mean"] is False
+    # Required from HA 2026.11; 0 == StatisticMeanType.NONE.
+    assert meta["mean_type"] == 0
+    assert meta["unit_class"] == "energy"
     assert meta["name"] == "Ratio Charger Energy ABC123"
     assert statistic_id_for("ABC123") == "ratio:energy_abc123"
 
