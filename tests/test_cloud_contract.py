@@ -98,7 +98,7 @@ def _id_token(sub: str = USER_ID) -> str:
 
 
 @pytest.fixture
-async def real_client() -> AsyncGenerator[tuple[RatioClient, RecordingTransport], None]:
+async def real_client() -> AsyncGenerator[tuple[RatioClient, RecordingTransport]]:
     """A real ``RatioClient`` whose transport records instead of sending.
 
     Only the transport is faked. ``_coerce_body()``, ``_put_settings()``, the

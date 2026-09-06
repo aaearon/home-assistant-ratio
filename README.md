@@ -10,6 +10,13 @@ Adds your Ratio EV charger(s) to Home Assistant via the same cloud API the offic
 
 ## Install
 
+### Requirements
+
+Home Assistant **2025.11.0** or newer. The external-statistics metadata this
+integration writes requires the recorder's `mean_type` (HA 2025.4+) and
+`unit_class` (HA 2025.11+) fields; earlier recorder schemas reject that
+payload and the charger's energy statistic silently fails to import.
+
 ### HACS (recommended)
 
 1. HACS → three-dot menu → **Custom repositories**.
@@ -298,10 +305,12 @@ logger:
 
 ## Develop
 
+Requires Python 3.13+ (matching HA 2025.11's own minimum).
+
 ```bash
 git clone https://github.com/aaearon/home-assistant-ratio
 cd home-assistant-ratio
-pip install pytest-homeassistant-custom-component aioratio ruff mypy
+pip install "pytest-homeassistant-custom-component==0.13.294" aioratio ruff "mypy==1.18.2" aiousbwatcher "pycares<5"
 pytest
 ruff check custom_components tests   # lint
 ruff format custom_components tests  # format
