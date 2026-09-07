@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
+from collections.abc import Iterator
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +22,7 @@ from custom_components.ratio.coordinator import (
     RatioHistoryCoordinator,
 )
 from custom_components.ratio.sensor import _last_session
+from custom_components.ratio.statistics import LastStatistic
 
 
 def _session(sid: str, serial: str, begin_ts: int, energy: int = 1000) -> Session:
@@ -51,19 +53,53 @@ def _make_main_coordinator(serials: list[str]) -> MagicMock:
     return main
 
 
-def _patch_import() -> AbstractContextManager[AsyncMock]:
+@contextmanager
+def _patch_import() -> Iterator[AsyncMock]:
     """Return a patcher context for async_import_sessions.
 
     The mock returns ``starting_total + sum(session.total_charging_energy)`` so
     the coordinator's running_total bookkeeping behaves correctly.
+
+    Also patches ``async_get_last_statistic`` to return ``None`` (no recorder
+    series) by default, so tests that don't care about recorder-baseline
+    seeding keep the pre-existing "store empty -> 0.0" behavior without
+    needing a real recorder set up in ``hass``. Tests exercising the seeding
+    logic itself should patch ``async_get_last_statistic`` explicitly instead
+    (see ``_patch_last_statistic``) and not use this helper.
     """
 
     async def _fake(hass, serial, sessions, starting_total):
         return float(starting_total) + sum(s.total_charging_energy for s in sessions)
 
+    with ExitStack() as stack:
+        mock_import = stack.enter_context(
+            patch(
+                "custom_components.ratio.coordinator.async_import_sessions",
+                new=AsyncMock(side_effect=_fake),
+            )
+        )
+        stack.enter_context(_patch_last_statistic(None))
+        yield mock_import
+
+
+def _patch_last_statistic(
+    total: float | None = None,
+    start_ts: int = 0,
+) -> AbstractContextManager[AsyncMock]:
+    """Return a patcher context for ``async_get_last_statistic``.
+
+    Defaults to ``None`` (no recorder series) so tests that don't care about
+    recorder-baseline seeding keep the pre-existing "store empty -> 0.0"
+    behavior without needing a real recorder set up in ``hass``. ``start_ts``
+    defaults to the epoch so the already-written-hour filter drops nothing.
+    """
     return patch(
-        "custom_components.ratio.coordinator.async_import_sessions",
-        new=AsyncMock(side_effect=_fake),
+        "custom_components.ratio.coordinator.async_get_last_statistic",
+        new=AsyncMock(
+            return_value=None
+            if total is None
+            else LastStatistic(start_ts=start_ts, total=total)
+        ),
     )
 
 
@@ -169,6 +205,98 @@ async def test_running_total_persists_across_restart(hass: HomeAssistant) -> Non
         assert [s.session_id for s in args[2]] == ["id-2"]
     # Updated total is persisted again.
     assert coord2._running_total[serial] == 4000.0
+
+
+@pytest.mark.asyncio
+async def test_seeds_starting_total_from_recorder_when_store_empty(
+    hass: HomeAssistant,
+) -> None:
+    """Issue #84: a store with no entry for the serial (e.g. after a
+    remove-and-re-add, which wipes the per-entry_id store but not the
+    per-serial recorder series) must seed ``starting_total`` from the
+    recorder's last cumulative ``sum`` instead of restarting at 0.0.
+    """
+    serial = "S_RECORDER_SEED"
+    entry = _make_entry(hass, entry_id="e_recorder_seed")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+    # Store has no entry for this serial (fresh coordinator, nothing loaded).
+    assert serial not in coord._running_total
+
+    with (
+        _patch_last_statistic(9000.0),
+        patch(
+            "custom_components.ratio.coordinator.async_import_sessions",
+            new=AsyncMock(
+                side_effect=lambda hass, ser, sessions, starting_total: float(
+                    starting_total
+                )
+                + sum(s.total_charging_energy for s in sessions)
+            ),
+        ) as mock_import,
+    ):
+        await coord.async_config_entry_first_refresh()
+        args = mock_import.await_args_list[0].args
+        assert args[3] == 9000.0
+
+    assert coord._running_total[serial] == 10000.0
+
+
+@pytest.mark.asyncio
+async def test_store_running_total_used_verbatim_not_combined_with_recorder(
+    hass: HomeAssistant,
+) -> None:
+    """When the store already has a value for the serial, it must be used
+    verbatim as ``starting_total`` -- the recorder must not be consulted at
+    all, and in particular the two values must never be combined with
+    ``max()`` or any other arbitration.
+    """
+    serial = "S_STORE_WINS"
+    entry = _make_entry(hass, entry_id="e_store_wins")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("seed", serial, 1_700_000_000, energy=100)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+    # Store now holds a known value for this serial.
+    coord._running_total[serial] = 500.0
+
+    s2 = _session("id-2", serial, 1_700_010_000, energy=250)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s2], next_token=None)
+    )
+    # Recorder disagrees with the store, and is larger -- a max() composition
+    # would pick 9_000_000.0. The store value (500.0) must win verbatim.
+    with (
+        _patch_last_statistic(9_000_000.0) as mock_get_last_statistic,
+        patch(
+            "custom_components.ratio.coordinator.async_import_sessions",
+            new=AsyncMock(
+                side_effect=lambda hass, ser, sessions, starting_total: float(
+                    starting_total
+                )
+                + sum(s.total_charging_energy for s in sessions)
+            ),
+        ) as mock_import,
+    ):
+        await coord.async_refresh()
+        args = mock_import.await_args_list[0].args
+        assert args[3] == 500.0
+    # The recorder must not even be consulted when the store already has a
+    # value -- confirms the seeding is "store empty -> recorder", not an
+    # unconditional composition of the two.
+    mock_get_last_statistic.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -17,7 +17,7 @@ import logging
 import re
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from aioratio.models.history import Session
 from homeassistant.core import HomeAssistant
@@ -49,10 +49,14 @@ def statistic_id_for(serial: str) -> str:
     return f"{DOMAIN}:energy_{_slugify_serial(serial)}"
 
 
+def floor_hour_ts(ts: int) -> int:
+    """Floor a UTC epoch-seconds timestamp to the start of its hour."""
+    return int(ts) - int(ts) % 3600
+
+
 def _floor_hour(ts: int) -> datetime:
     """Floor a UTC epoch-seconds timestamp to the start of its hour."""
-    dt = datetime.fromtimestamp(int(ts), tz=UTC)
-    return dt.replace(minute=0, second=0, microsecond=0)
+    return datetime.fromtimestamp(floor_hour_ts(ts), tz=UTC)
 
 
 def build_metadata(serial: str) -> StatisticMetaData:
@@ -142,11 +146,73 @@ async def async_import_sessions(
     return new_total
 
 
+class LastStatistic(NamedTuple):
+    """The last recorded row of a charger's external statistic series."""
+
+    start_ts: int
+    """Epoch seconds of the row's hour start."""
+
+    total: float
+    """The row's cumulative ``sum``."""
+
+
+async def async_get_last_sum(hass: HomeAssistant, serial: str) -> float | None:
+    """Return the last recorded cumulative ``sum`` for a charger's statistic.
+
+    Returns ``None`` when the statistic has no rows at all -- distinct from a
+    series whose latest ``sum`` happens to be ``0.0``. Callers must not
+    collapse the two: ``None`` means "no series exists", ``0.0`` means "a
+    series exists and its latest cumulative total is zero".
+    """
+    last = await async_get_last_statistic(hass, serial)
+    return None if last is None else last.total
+
+
+async def async_get_last_statistic(
+    hass: HomeAssistant, serial: str
+) -> LastStatistic | None:
+    """Return the last recorded row of a charger's statistic, or ``None``.
+
+    ``None`` means "no series exists" -- never confuse it with a real
+    ``sum`` of ``0.0``.
+    """
+    # Lazy import -- pulling in the recorder package at module level is heavy
+    # and breaks tests that don't load the recorder integration. Matches the
+    # deferred-import convention used by ``async_import_sessions`` above.
+    # ``get_instance`` is imported from ``homeassistant.helpers.recorder``
+    # (its defining module) rather than ``homeassistant.components.recorder``
+    # -- the latter only re-exports it without declaring it in ``__all__``,
+    # which mypy's strict no-implicit-reexport check rejects.
+    from homeassistant.components.recorder.statistics import get_last_statistics
+    from homeassistant.helpers.recorder import get_instance
+
+    statistic_id = statistic_id_for(serial)
+    # convert_units MUST be False: the integration writes raw Wh, and True
+    # would silently return a display-unit-converted value as the baseline.
+    result = await get_instance(hass).async_add_executor_job(
+        get_last_statistics, hass, 1, statistic_id, False, {"sum"}
+    )
+    rows = result.get(statistic_id) if result else None
+    if not rows:
+        return None
+    row = rows[0]
+    last_sum = row.get("sum")
+    start = row.get("start")
+    if last_sum is None or start is None:
+        return None
+    # ``start`` is epoch seconds (the DB ``start_ts`` column), not a datetime.
+    return LastStatistic(start_ts=int(start), total=float(last_sum))
+
+
 # Re-export dt_util for tests.
 __all__ = [
+    "LastStatistic",
+    "async_get_last_statistic",
+    "async_get_last_sum",
     "async_import_sessions",
     "build_metadata",
     "build_statistics",
+    "floor_hour_ts",
     "statistic_id_for",
     "dt_util",
 ]

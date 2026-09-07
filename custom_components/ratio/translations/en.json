@@ -224,6 +224,9 @@
     "backfill_overlap": {
       "message": "Cannot backfill session history: begin_time {begin_time} predates the latest history-import baseline ({baseline}) across affected charger(s) {serials}. Per-charger baselines may differ; choose a begin_time after this latest baseline to satisfy all listed chargers and avoid non-monotonic energy statistics."
     },
+    "backfill_existing_series": {
+      "message": "Cannot backfill session history for charger(s) {serials}: an external energy statistic series already exists for them. Manual import is only permitted into an empty series, because the recorder overwrites rows by (metadata_id, start) without recalculating later rows -- backfilling into an existing series could silently desynchronize its cumulative sum from reality. Re-adding the integration does not reset this: the statistic id is derived from the charger serial, not the config entry, so the recorder series survives a remove-and-re-add."
+    },
     "ble_not_enabled": {
       "message": "Bluetooth is not enabled for charger {serial}."
     },
@@ -286,7 +289,7 @@
     },
     "import_session_history": {
       "name": "Import session history",
-      "description": "Backfill external statistics from completed charge sessions in the chosen window. begin_time must not predate the history-import baseline of any charger; otherwise the call is rejected to preserve monotonic energy statistics.",
+      "description": "Backfill external statistics from completed charge sessions in the chosen window. Only accepted when the charger's energy statistic series is still empty: rejected if begin_time predates the history-import baseline, or if the charger already has any recorder statistics at all. Re-adding the integration does not reset this.",
       "fields": {
         "begin_time": { "name": "Begin time", "description": "Start of the window to import." },
         "end_time": { "name": "End time", "description": "Optional end of the window. Defaults to now." }

@@ -47,7 +47,12 @@ from .const import (
     STORAGE_KEY_PREFERENCES,
     STORAGE_VERSION,
 )
-from .statistics import async_import_sessions
+from .statistics import (
+    async_get_last_statistic,
+    async_get_last_sum,
+    async_import_sessions,
+    floor_hour_ts,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -642,11 +647,20 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         ``_seen_ids``, ``_running_total``) — manual imports are intended to fill
         gaps without disturbing the running totals used by the live poll loop.
 
+        Manual backfill is only permitted into an *empty* statistic series: the
+        recorder overwrites rows by ``(metadata_id, start)`` without
+        recalculating later rows, so writing into a window that precedes (or
+        even follows) existing rows can silently desynchronize the ``sum``
+        column from reality. There is no "insert and recompute" path.
+
         Raises:
             ServiceValidationError: if ``begin_time`` predates
                 ``_last_imported_end_time`` for any charger known to the main
-                coordinator. This prevents non-monotonic statistics from
-                backfilling earlier than the live baseline.
+                coordinator (precise message, store-derived), or if any such
+                charger already has recorder statistics at all (recorder-
+                derived — catches the case where the store's baseline was
+                lost, e.g. by a remove-and-re-add, but the recorder series,
+                keyed by serial rather than by config entry, survived).
         """
 
         def _to_epoch(v: _datetime_type | int) -> int:
@@ -680,6 +694,26 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                 },
             )
 
+        # Strengthened guard: reject whenever the serial's recorder statistic
+        # series already has any rows at all, regardless of where the
+        # requested window falls relative to them. This catches the case the
+        # store-based check above cannot: a store whose baseline was wiped
+        # (e.g. remove-and-re-add of the integration) while the recorder
+        # series — keyed by serial, not by config entry — survived intact.
+        existing_series = [
+            serial
+            for serial in serials
+            if await async_get_last_sum(self.hass, serial) is not None
+        ]
+        if existing_series:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="backfill_existing_series",
+                translation_placeholders={
+                    "serials": ", ".join(sorted(existing_series)),
+                },
+            )
+
         imported: dict[str, int] = {}
         for serial in serials:
             fetched = await self._fetch_all_pages(serial, begin_ts, end_ts)
@@ -687,8 +721,9 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
             if not sessions:
                 imported[serial] = 0
                 continue
-            # Use a fresh starting_total of 0 — manual imports backfill an
-            # arbitrary historic window and shouldn't poison the live total.
+            # A fresh starting_total of 0.0 is correct here: the guard above
+            # proves this serial's statistic series is provably empty, so
+            # there is no existing baseline to preserve or poison.
             await async_import_sessions(self.hass, serial, sessions, 0.0)
             imported[serial] = sum(
                 1
@@ -717,6 +752,26 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         result: dict[str, list[Session]] = {}
 
         for serial in serials:
+            # Seed before computing the fetch window, so the window itself is
+            # already correct. A remove-and-re-add wipes the whole per-entry_id
+            # store while the per-serial recorder series survives (issue #84):
+            # without this the poll would refetch HISTORY_BACKFILL_DAYS of
+            # already-imported sessions and rewrite their rows.
+            seeded_hour_ts: int | None = None
+            if (
+                serial not in self._running_total
+                and serial not in self._last_imported_end_time
+            ):
+                last = await async_get_last_statistic(self.hass, serial)
+                if last is not None:
+                    self._running_total[serial] = last.total
+                    seeded_hour_ts = last.start_ts
+                    # _begin_time_for subtracts HISTORY_OVERLAP_SECONDS, so add
+                    # it back to land exactly on the hour after the last row.
+                    self._last_imported_end_time[serial] = (
+                        last.start_ts + 3600 + HISTORY_OVERLAP_SECONDS
+                    )
+
             begin_time = self._begin_time_for(serial, now_ts)
             try:
                 fetched = await self._fetch_all_pages(serial, begin_time)
@@ -736,9 +791,24 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                 new_sessions.append(s)
 
             new_sessions.sort(key=_session_begin)
+            # All newly observed ids are remembered, including any dropped
+            # below, so a dropped session is never reconsidered.
+            new_ids = [s.session_id for s in new_sessions]
+
+            if seeded_hour_ts is not None:
+                # Belt and braces, independent of the cursor arithmetic above:
+                # never write into an hour the recorder already has a row for.
+                # Local to this poll only.
+                new_sessions = [
+                    s
+                    for s in new_sessions
+                    if floor_hour_ts(_session_begin(s)) > seeded_hour_ts
+                ]
 
             if new_sessions:
                 # Import statistics for the newly observed sessions in chronological order.
+                # The store value is used verbatim -- the recorder is consulted
+                # only by the seeding above, and the two are never combined.
                 self._running_total[serial] = await async_import_sessions(
                     self.hass,
                     serial,
@@ -775,8 +845,7 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
 
             # Cap dedup IDs (FIFO).
             id_list = list(self._seen_ids.get(serial, []))
-            for s in new_sessions:
-                id_list.append(s.session_id)
+            id_list.extend(new_ids)
             if len(id_list) > DEDUP_ID_LIMIT:
                 id_list = id_list[-DEDUP_ID_LIMIT:]
             self._seen_ids[serial] = id_list

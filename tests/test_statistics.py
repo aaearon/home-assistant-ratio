@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from aioratio.models.history import Session, TimeData
 from homeassistant.components.recorder.models.statistics import (
@@ -12,6 +13,8 @@ from homeassistant.components.recorder.models.statistics import (
 )
 
 from custom_components.ratio.statistics import (
+    async_get_last_statistic,
+    async_get_last_sum,
     build_metadata,
     build_statistics,
     statistic_id_for,
@@ -159,3 +162,120 @@ def test_build_statistics_empty_returns_empty() -> None:
     stats, total = build_statistics([], starting_total=42.0)
     assert stats == []
     assert total == 42.0
+
+
+# ---------------------------------------------------------------------------
+# async_get_last_sum
+# ---------------------------------------------------------------------------
+
+
+def _mock_hass_for_recorder(executor_result: Any) -> MagicMock:
+    """Build a mock ``hass`` wired so ``get_instance(hass).async_add_executor_job``
+    actually invokes the passed callable with its args, so tests can assert on
+    the exact arguments the callable was invoked with.
+    """
+    instance = MagicMock()
+
+    async def _run_job(func: Any, *args: Any) -> Any:
+        return func(*args)
+
+    instance.async_add_executor_job = AsyncMock(side_effect=_run_job)
+    return instance
+
+
+async def test_async_get_last_sum_returns_none_for_unknown_statistic() -> None:
+    hass = MagicMock()
+    recorder_instance = _mock_hass_for_recorder(None)
+    with (
+        patch(
+            "homeassistant.helpers.recorder.get_instance",
+            return_value=recorder_instance,
+        ),
+        patch(
+            "homeassistant.components.recorder.statistics.get_last_statistics",
+            return_value={},
+        ),
+    ):
+        result = await async_get_last_sum(hass, "UNKNOWN01")
+    assert result is None
+
+
+async def test_async_get_last_sum_returns_raw_sum_for_seeded_statistic() -> None:
+    hass = MagicMock()
+    recorder_instance = _mock_hass_for_recorder(None)
+    statistic_id = statistic_id_for("SEEDED01")
+    with (
+        patch(
+            "homeassistant.helpers.recorder.get_instance",
+            return_value=recorder_instance,
+        ),
+        patch(
+            "homeassistant.components.recorder.statistics.get_last_statistics",
+            return_value={statistic_id: [{"start": 1_700_000_000.0, "sum": 4321.5}]},
+        ),
+    ):
+        result = await async_get_last_sum(hass, "SEEDED01")
+    assert result == 4321.5
+
+
+async def test_async_get_last_sum_uses_convert_units_false() -> None:
+    """``convert_units`` MUST be ``False`` -- ``True`` would silently return a
+    display-unit-converted value instead of the raw Wh baseline."""
+    hass = MagicMock()
+    recorder_instance = _mock_hass_for_recorder(None)
+    statistic_id = statistic_id_for("CONV01")
+    with (
+        patch(
+            "homeassistant.helpers.recorder.get_instance",
+            return_value=recorder_instance,
+        ),
+        patch(
+            "homeassistant.components.recorder.statistics.get_last_statistics",
+            return_value={statistic_id: [{"start": 1_700_000_000.0, "sum": 1.0}]},
+        ) as mock_get_last_statistics,
+    ):
+        await async_get_last_sum(hass, "CONV01")
+
+    mock_get_last_statistics.assert_called_once_with(
+        hass, 1, statistic_id, False, {"sum"}
+    )
+
+
+async def test_async_get_last_statistic_returns_hour_start_as_epoch_seconds() -> None:
+    """The recorder returns ``start`` as epoch seconds (the DB ``start_ts``
+    column), not a datetime -- the caller relies on that to place the cursor.
+    """
+    hass = MagicMock()
+    recorder_instance = _mock_hass_for_recorder(None)
+    statistic_id = statistic_id_for("STARTTS01")
+    with (
+        patch(
+            "homeassistant.helpers.recorder.get_instance",
+            return_value=recorder_instance,
+        ),
+        patch(
+            "homeassistant.components.recorder.statistics.get_last_statistics",
+            return_value={statistic_id: [{"start": 1_700_000_000.0, "sum": 42.0}]},
+        ),
+    ):
+        result = await async_get_last_statistic(hass, "STARTTS01")
+
+    assert result is not None
+    assert result.start_ts == 1_700_000_000
+    assert result.total == 42.0
+
+
+async def test_async_get_last_statistic_returns_none_for_unknown_statistic() -> None:
+    hass = MagicMock()
+    recorder_instance = _mock_hass_for_recorder(None)
+    with (
+        patch(
+            "homeassistant.helpers.recorder.get_instance",
+            return_value=recorder_instance,
+        ),
+        patch(
+            "homeassistant.components.recorder.statistics.get_last_statistics",
+            return_value={},
+        ),
+    ):
+        assert await async_get_last_statistic(hass, "UNKNOWN02") is None
