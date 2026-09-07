@@ -36,6 +36,13 @@ All notable changes to this project will be documented in this file.
     window starts past everything already written, and any session whose
     hour is at or before that row is dropped from that one poll (while
     still being recorded as seen, so it is not reconsidered later).
+  - The recorder is only consulted when it is actually loaded. Seeding runs
+    on the first poll of every fresh config entry, so on an installation
+    without the `recorder` integration (i.e. not using `default_config`) the
+    lookup raised and the config entry failed to set up. A missing recorder
+    now means "no series exists", which correctly yields a `0.0` baseline; a
+    genuine recorder query error still propagates rather than silently
+    re-seeding at zero.
   - `ratio.import_session_history` always imported with a hardcoded `0.0`
     baseline, and only rejected a backfill window that predated its own
     storage-tracked baseline — a check trivially bypassed by the same
