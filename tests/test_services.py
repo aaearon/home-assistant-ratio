@@ -590,10 +590,19 @@ async def test_history_coordinator_async_import_window(
     begin = datetime(2023, 11, 1, tzinfo=UTC)
     end = datetime(2023, 12, 1, tzinfo=UTC)
 
-    with patch(
-        "custom_components.ratio.coordinator.async_import_sessions",
-        new=AsyncMock(side_effect=_fake),
-    ) as mock_import:
+    with (
+        patch(
+            "custom_components.ratio.coordinator.async_import_sessions",
+            new=AsyncMock(side_effect=_fake),
+        ) as mock_import,
+        # No real recorder set up in this test's hass -- there is no
+        # existing statistic series for this serial, so the manual-import
+        # guard must see "no series" and proceed with a 0.0 baseline.
+        patch(
+            "custom_components.ratio.coordinator.async_get_last_sum",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
         result = await history.async_import_window(begin_time=begin, end_time=end)
 
     assert result == {serial: 1}
@@ -603,6 +612,10 @@ async def test_history_coordinator_async_import_window(
     assert call.kwargs["begin_time"] == int(begin.timestamp())
     assert call.kwargs["end_time"] == int(end.timestamp())
     mock_import.assert_awaited()
+    # Strengthened assertion (issue #84): the actual starting_total argument
+    # passed to async_import_sessions must be 0.0 -- not merely "was awaited".
+    assert mock_import.await_args is not None
+    assert mock_import.await_args.args[3] == 0.0
 
 
 @pytest.mark.asyncio

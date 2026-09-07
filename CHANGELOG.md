@@ -2,6 +2,65 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [0.16.1] — 2026-09-07
+
+### Fixed
+
+- **Non-monotonic `sum` on `ratio:energy_<serial>` external statistics (#84).**
+  Two independent causes:
+  - The live polling coordinator only ever seeded a new session import's
+    starting total from its own per-`entry_id` storage, defaulting to `0.0`
+    when that storage had no entry for the serial. Since the statistic id
+    is derived from the charger serial, not the config entry
+    (`statistic_id_for()`), a remove-and-re-add of the integration wiped the
+    storage while the recorder kept the full historical series — the next
+    poll then restarted `sum` at `0.0`, producing a large downward jump. The
+    coordinator now seeds from the recorder's last recorded row
+    (`statistics.async_get_last_statistic`) whenever its own storage has no
+    value for the serial, and continues to use the storage value verbatim
+    (never combined with the recorder value, e.g. via `max()`) once one
+    exists.
+  - A re-add also wiped the import cursor and the seen-session ids, so the
+    first poll fetched the full 30-day backfill window and treated every
+    already-imported session in it as new. Those sessions were re-imported
+    on top of the recorder rows that already existed for their hours, and
+    the recorder upserts by `(metadata_id, start)` without recalculating
+    later rows — so each historical row's `sum` was rewritten to the seeded
+    lifetime total plus its own cumulative energy. Monotonicity was
+    preserved, so nothing warned, but the lifetime total was permanently
+    inflated by the whole window and the energy dashboard gained a large
+    spike at the window boundary. Seeding now also advances the import
+    cursor to the hour after the recorder's last row, so the first fetch
+    window starts past everything already written, and any session whose
+    hour is at or before that row is dropped from that one poll (while
+    still being recorded as seen, so it is not reconsidered later).
+  - The recorder is only consulted when it is actually loaded. Seeding runs
+    on the first poll of every fresh config entry, so on an installation
+    without the `recorder` integration (i.e. not using `default_config`) the
+    lookup raised and the config entry failed to set up. A missing recorder
+    now means "no series exists", which correctly yields a `0.0` baseline; a
+    genuine recorder query error still propagates rather than silently
+    re-seeding at zero.
+  - `ratio.import_session_history` always imported with a hardcoded `0.0`
+    baseline, and only rejected a backfill window that predated its own
+    storage-tracked baseline — a check trivially bypassed by the same
+    remove-and-re-add. The service now also rejects whenever the target
+    charger already has *any* recorder statistics at all, regardless of
+    where the requested window falls relative to them, since the recorder
+    overwrites rows by `(metadata_id, start)` without recalculating later
+    rows and there is no safe way to insert into a non-empty series. Manual
+    backfill is now only accepted into a provably empty series.
+
+  **This release does not repair history that is already corrupted.** It
+  only stops the corruption from happening on future remove-and-re-add
+  cycles and future manual backfills. If your `ratio:energy_<serial>` energy
+  dashboard already shows a drop or a spike from hitting this bug before
+  upgrading, that bad data is still there and has to be corrected by hand
+  (e.g. via Home Assistant's Developer Tools → Statistics tool) — upgrading
+  alone will not fix it.
+
 ## [0.16.0] — 2026-09-06
 
 ### Changed
