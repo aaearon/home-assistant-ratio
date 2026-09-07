@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-09-07
+
 ### Fixed
 
 - **Non-monotonic `sum` on `ratio:energy_<serial>` external statistics (#84).**
@@ -43,6 +45,14 @@ All notable changes to this project will be documented in this file.
     overwrites rows by `(metadata_id, start)` without recalculating later
     rows and there is no safe way to insert into a non-empty series. Manual
     backfill is now only accepted into a provably empty series.
+
+  **This release does not repair history that is already corrupted.** It
+  only stops the corruption from happening on future remove-and-re-add
+  cycles and future manual backfills. If your `ratio:energy_<serial>` energy
+  dashboard already shows a drop or a spike from hitting this bug before
+  upgrading, that bad data is still there and has to be corrected by hand
+  (e.g. via Home Assistant's Developer Tools → Statistics tool) — upgrading
+  alone will not fix it.
 
 ## [0.16.0] — 2026-09-06
 
