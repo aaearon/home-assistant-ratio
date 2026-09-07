@@ -6,8 +6,9 @@ Completed charge sessions are aggregated per hour on the
 that hour.
 
 Uses ``async_add_external_statistics``; the recorder requires the source to
-match the statistic_id domain prefix (``ratio``). From HA 2026.11 the metadata
-must also carry ``mean_type`` and ``unit_class``.
+match the statistic_id domain prefix (``ratio``). This integration requires
+HA 2025.11+: ``mean_type`` was added to the metadata in 2025.4 and
+``unit_class`` in 2025.11.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import logging
 import re
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from aioratio.models.history import Session
 from homeassistant.core import HomeAssistant
@@ -57,38 +58,29 @@ def _floor_hour(ts: int) -> datetime:
 def build_metadata(serial: str) -> StatisticMetaData:
     """Build the StatisticMetaData dict for one charger.
 
-    StatisticMetaData is a TypedDict in the recorder package; constructing a
-    plain dict here keeps this module importable without the recorder loaded.
+    ``StatisticMeanType`` is imported lazily for the same reason the recorder
+    import in ``async_import_sessions`` is: pulling the recorder package in at
+    module import time is heavy and breaks tests that do not load the recorder
+    integration.
 
-    The cast is required because this one payload has to stay valid across
-    HA releases in which StatisticMetaData itself changes shape: ``mean_type``
-    was added in 2025.4 and ``unit_class`` in 2025.11, while ``has_mean`` is
-    deprecated and disappears in 2026.4. Sending the union of the keys is what
-    keeps a single payload correct on every supported version -- the recorder
-    reads the keys it knows and ignores the rest -- but no single version of
-    the TypedDict accepts all of them, so it cannot be checked statically.
+    ``has_mean`` is deliberately omitted. It is ``NotRequired`` from HA
+    2025.11 -- this integration's minimum -- and the column is slated for
+    removal, after which ``StatisticsMeta(**meta)`` would raise TypeError on
+    it.
     """
-    return cast(
-        "StatisticMetaData",
-        {
-            # has_mean is deprecated in favour of mean_type; both are kept so
-            # the metadata stays valid on HA <= 2025.3, which does not know
-            # mean_type.
-            "has_mean": False,
-            # StatisticMeanType.NONE (== 0). Written as the literal rather than
-            # importing the enum so this module stays importable without the
-            # recorder loaded, as described in the module docstring.
-            "mean_type": 0,
-            "has_sum": True,
-            "name": f"Ratio Charger Energy {serial}",
-            "source": DOMAIN,
-            "statistic_id": statistic_id_for(serial),
-            # EnergyConverter.UNIT_CLASS; lets the recorder convert Wh to the
-            # unit the user has configured for energy.
-            "unit_class": "energy",
-            "unit_of_measurement": "Wh",
-        },
-    )
+    from homeassistant.components.recorder.models.statistics import StatisticMeanType
+
+    return {
+        "mean_type": StatisticMeanType.NONE,
+        "has_sum": True,
+        "name": f"Ratio Charger Energy {serial}",
+        "source": DOMAIN,
+        "statistic_id": statistic_id_for(serial),
+        # EnergyConverter.UNIT_CLASS; lets the recorder convert Wh to the
+        # unit the user has configured for energy.
+        "unit_class": "energy",
+        "unit_of_measurement": "Wh",
+    }
 
 
 def build_statistics(

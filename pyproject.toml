@@ -1,6 +1,6 @@
 [tool.ruff]
 line-length = 88
-target-version = "py312"
+target-version = "py313"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -11,7 +11,7 @@ asyncio_mode = "auto"
 addopts = "--cov=custom_components/ratio --cov-report=term-missing"
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 strict = true
 warn_return_any = true
 warn_unreachable = false

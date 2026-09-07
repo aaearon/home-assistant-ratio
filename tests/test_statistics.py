@@ -6,7 +6,10 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 from aioratio.models.history import Session, TimeData
-from homeassistant.components.recorder.models.statistics import StatisticData
+from homeassistant.components.recorder.models.statistics import (
+    StatisticData,
+    StatisticMeanType,
+)
 
 from custom_components.ratio.statistics import (
     build_metadata,
@@ -41,12 +44,22 @@ def test_metadata_is_consistent() -> None:
     assert meta["source"] == "ratio"
     assert meta["unit_of_measurement"] == "Wh"
     assert meta["has_sum"] is True
-    assert meta["has_mean"] is False
-    # Required from HA 2026.11; 0 == StatisticMeanType.NONE.
-    assert meta["mean_type"] == 0
+    # mean_type landed in HA 2025.4; unit_class in HA 2025.11.
+    assert meta["mean_type"] is StatisticMeanType.NONE
     assert meta["unit_class"] == "energy"
     assert meta["name"] == "Ratio Charger Energy ABC123"
     assert statistic_id_for("ABC123") == "ratio:energy_abc123"
+
+
+def test_metadata_omits_deprecated_has_mean() -> None:
+    """``has_mean`` must not be present in the metadata payload.
+
+    ``StatisticsMeta.from_meta`` does an unfiltered ``StatisticsMeta(**meta)``
+    kwargs unpack, so once HA drops the ``has_mean`` column, sending that key
+    would raise ``TypeError`` and silently prevent the statistic from being
+    created.
+    """
+    assert "has_mean" not in build_metadata("ABC123")
 
 
 def test_statistic_id_slugifies_serial() -> None:

@@ -63,7 +63,7 @@ def auto_enable_custom_integrations(
 
 
 @pytest.fixture(autouse=True)
-def mock_bluetooth_setup() -> Generator[None, None, None]:
+def mock_bluetooth_setup() -> Generator[None]:
     """Prevent the bluetooth integration from opening hardware sockets in tests.
 
     The ratio manifest declares ``dependencies: ["bluetooth"]`` so HA tries to
@@ -110,7 +110,7 @@ def _make_client_instance() -> MagicMock:
 
 
 @pytest.fixture
-def mock_ratio_client() -> Generator[MagicMock, None, None]:
+def mock_ratio_client() -> Generator[MagicMock]:
     """Patch RatioClient where the integration imports it.
 
     Yields the class mock. The configured instance is accessible via
@@ -148,7 +148,7 @@ def mock_config_entry(hass) -> MockConfigEntry:
 @pytest.fixture
 async def setup_integration(
     hass, mock_config_entry, mock_ratio_client
-) -> AsyncGenerator[MockConfigEntry, None]:
+) -> AsyncGenerator[MockConfigEntry]:
     """Set up the Ratio integration via the real async_setup_entry path.
 
     After this fixture completes, ``entry.runtime_data`` contains the

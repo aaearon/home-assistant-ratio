@@ -2,10 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.16.0] — 2026-09-06
 
 ### Changed
 
+- **Breaking: minimum Home Assistant version raised to 2025.11.0.** The
+  external-statistics metadata built by `build_metadata()` now requires
+  `mean_type` (added in HA 2025.4) and `unit_class` (added in HA 2025.11);
+  earlier recorder schemas reject or mishandle a payload carrying them, so the
+  integration can no longer support HA releases before 2025.11.0.
 - **Documented a Ratio cloud defect that makes `select.<charger>_start_mode`
   look broken.** A `startMode` write is accepted and persists, but no
   subsequent `GET` reflects it until some other `userSettings` key is written.
@@ -14,6 +19,22 @@ All notable changes to this project will be documented in this file.
   same defect, so this is not something the integration can fix — there is no
   read that returns the truth. The entity deliberately does not fake the value,
   so a write the cloud genuinely rejects still surfaces as a failure. (#80)
+
+### Fixed
+
+- **`build_metadata()` no longer sends a `has_mean` key to the recorder.**
+  `StatisticsMeta.from_meta` does an unfiltered `StatisticsMeta(**meta)`
+  kwargs unpack, so a key without a matching DB column raises `TypeError`
+  inside a recorder executor job — an error the recorder swallows, silently
+  never creating the statistic while the coordinator still advances its
+  watermark, permanently losing the affected sessions. PR #82 added
+  `mean_type`/`unit_class` but left the deprecated `has_mean` key in place,
+  which only happened to work because HA <= 2026.3 still defines the column;
+  dropping it removes the trap outright rather than continuing to depend on
+  that column's continued existence. A recorder round-trip test
+  (`tests/test_statistics_recorder.py`) now exercises the real recorder so a
+  rejected metadata payload fails the test suite instead of failing silently
+  in production.
 
 ## [0.15.0] — 2026-08-25
 
