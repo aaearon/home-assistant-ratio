@@ -216,6 +216,7 @@ async def test_seeds_starting_total_from_recorder_when_store_empty(
     per-serial recorder series) must seed ``starting_total`` from the
     recorder's last cumulative ``sum`` instead of restarting at 0.0.
     """
+    hass.config.components.add("recorder")
     serial = "S_RECORDER_SEED"
     entry = _make_entry(hass, entry_id="e_recorder_seed")
     main = _make_main_coordinator([serial])
@@ -234,10 +235,10 @@ async def test_seeds_starting_total_from_recorder_when_store_empty(
         patch(
             "custom_components.ratio.coordinator.async_import_sessions",
             new=AsyncMock(
-                side_effect=lambda hass, ser, sessions, starting_total: float(
-                    starting_total
+                side_effect=lambda hass, ser, sessions, starting_total: (
+                    float(starting_total)
+                    + sum(s.total_charging_energy for s in sessions)
                 )
-                + sum(s.total_charging_energy for s in sessions)
             ),
         ) as mock_import,
     ):
@@ -283,10 +284,10 @@ async def test_store_running_total_used_verbatim_not_combined_with_recorder(
         patch(
             "custom_components.ratio.coordinator.async_import_sessions",
             new=AsyncMock(
-                side_effect=lambda hass, ser, sessions, starting_total: float(
-                    starting_total
+                side_effect=lambda hass, ser, sessions, starting_total: (
+                    float(starting_total)
+                    + sum(s.total_charging_energy for s in sessions)
                 )
-                + sum(s.total_charging_energy for s in sessions)
             ),
         ) as mock_import,
     ):
@@ -297,6 +298,52 @@ async def test_store_running_total_used_verbatim_not_combined_with_recorder(
     # value -- confirms the seeding is "store empty -> recorder", not an
     # unconditional composition of the two.
     mock_get_last_statistic.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recorder_not_loaded_seeds_zero_baseline_without_crashing(
+    hass: HomeAssistant,
+) -> None:
+    """When the ``recorder`` integration is not set up in ``hass`` at all,
+    seeding must fall back to a 0.0 baseline instead of crashing.
+
+    ``recorder`` ships in HA's ``default_config``, but a user who does not
+    use ``default_config`` can legitimately run without it. No statistics
+    series can possibly exist if the recorder never ran, so 0.0 is correct
+    -- this must not raise ``ConfigEntryNotReady`` (via a bare
+    ``KeyError('recorder_instance')`` from ``get_instance``).
+
+    This intentionally exercises the real ``async_get_last_statistic`` (no
+    patching of it, unlike ``_patch_import``/``_patch_last_statistic``) so
+    the real ``hass.config.components`` guard is under test.
+    """
+    assert "recorder" not in hass.config.components
+
+    serial = "S_NO_RECORDER"
+    entry = _make_entry(hass, entry_id="e_no_recorder")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+    assert serial not in coord._running_total
+
+    with patch(
+        "custom_components.ratio.coordinator.async_import_sessions",
+        new=AsyncMock(
+            side_effect=lambda hass, ser, sessions, starting_total: (
+                float(starting_total) + sum(s.total_charging_energy for s in sessions)
+            )
+        ),
+    ) as mock_import:
+        await coord.async_config_entry_first_refresh()
+        args = mock_import.await_args_list[0].args
+        assert args[3] == 0.0
+
+    assert coord._running_total[serial] == 1000.0
 
 
 @pytest.mark.asyncio

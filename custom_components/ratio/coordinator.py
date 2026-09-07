@@ -762,7 +762,20 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                 serial not in self._running_total
                 and serial not in self._last_imported_end_time
             ):
-                last = await async_get_last_statistic(self.hass, serial)
+                # ``recorder`` ships in HA's ``default_config`` but is not a
+                # hard dependency of this integration, so a user running
+                # without ``default_config`` can legitimately have it absent.
+                # No statistics series can possibly exist if the recorder
+                # never ran, so 0.0 is the correct baseline -- short-circuit
+                # here rather than letting ``get_instance`` raise
+                # ``KeyError('recorder_instance')``. A genuine query failure
+                # (recorder loaded, query itself raises) is not caught here
+                # and must still propagate.
+                last = (
+                    await async_get_last_statistic(self.hass, serial)
+                    if "recorder" in self.hass.config.components
+                    else None
+                )
                 if last is not None:
                     self._running_total[serial] = last.total
                     seeded_hour_ts = last.start_ts

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioratio.models import ChargerOverview
@@ -24,7 +24,7 @@ from homeassistant.components.recorder.statistics import (
     statistics_during_period,
 )
 from homeassistant.config_entries import ConfigEntryState
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.components.recorder.common import (
@@ -266,7 +266,9 @@ async def test_manual_import_rejected_forward_of_existing_recorder_series(
         window_end = window_begin + timedelta(days=1)
 
         with pytest.raises(ServiceValidationError):
-            await coord.async_import_window(begin_time=window_begin, end_time=window_end)
+            await coord.async_import_window(
+                begin_time=window_begin, end_time=window_end
+            )
 
         client.session_history.assert_not_called()
 
@@ -511,3 +513,33 @@ async def test_readd_seeds_cursor_past_last_recorder_hour(
         assert stored["last_imported_end_time"][serial] == (
             boundary + 3600 + HISTORY_OVERLAP_SECONDS
         )
+
+
+async def test_recorder_query_failure_propagates_not_swallowed(
+    hass: HomeAssistant,
+    async_test_recorder: RecorderInstanceContextManager,
+) -> None:
+    """A genuine recorder query failure (recorder loaded, but the query
+    itself raises) must still propagate.
+
+    Only the "recorder not loaded at all" case is short-circuited to a 0.0
+    baseline -- swallowing a real query error here would hide a genuine
+    problem behind a silently-wrong 0.0 baseline instead.
+    """
+    async with async_test_recorder(hass):
+        serial = "QUERYFAIL01"
+        entry = _make_entry(hass, entry_id="queryfail1")
+        main = _make_main_coordinator([serial])
+        client = MagicMock()
+        client.session_history = AsyncMock(
+            return_value=SessionHistoryPage(sessions=[], next_token=None)
+        )
+        coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+        with patch(
+            "homeassistant.components.recorder.statistics.get_last_statistics",
+            side_effect=RuntimeError("boom"),
+        ):
+            with pytest.raises(ConfigEntryNotReady) as excinfo:
+                await coord.async_config_entry_first_refresh()
+            assert isinstance(excinfo.value.__cause__, RuntimeError)
