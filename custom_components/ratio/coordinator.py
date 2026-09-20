@@ -88,6 +88,54 @@ async def _retry_once[T](fetch: Callable[[], Awaitable[T]]) -> T:
         return await fetch()
 
 
+class _TransientGraceMixin:
+    """Issue #88: suppress a single consecutive transient update failure.
+
+    ``last_update_stale`` is read by number entities (#69 guard) so a graced
+    cycle, which carries no fresh cloud read, does not clear their pending
+    post-write target. Grace is granted at
+    most once per consecutive run of transient failures — a failure that
+    follows an already-graced one raises ``UpdateFailed`` as usual, so a
+    genuine outage still surfaces. ``_note_success`` resets the counter and
+    records the timestamp used to report cache age in the warning log.
+    """
+
+    last_update_stale: bool
+    _grace_count: int
+    _last_success: _datetime_type | None
+
+    def _init_grace(self) -> None:
+        """Initialise grace state. Call from each subclass's ``__init__``."""
+        self.last_update_stale = False
+        self._grace_count = 0
+        self._last_success = None
+
+    def _note_success(self) -> None:
+        """Record a successful update, resetting the grace counter."""
+        self._grace_count = 0
+        self.last_update_stale = False
+        self._last_success = dt_util.utcnow()
+
+    def _try_grace(self, what: str, err: Exception, cached: object | None) -> bool:
+        """Return True if this failure is graced (caller must return its cached data)."""
+        if cached is None or not _is_transient(err) or self._grace_count != 0:
+            return False
+        self._grace_count += 1
+        self.last_update_stale = True
+        age = (
+            dt_util.utcnow() - self._last_success
+            if self._last_success is not None
+            else None
+        )
+        _LOGGER.warning(
+            "%s failed after retry, using cached data (age: %s): %s",
+            what,
+            age,
+            err,
+        )
+        return True
+
+
 @dataclass
 class RatioData:
     """Aggregate state cached by the coordinator each cycle."""
@@ -101,7 +149,7 @@ class RatioData:
     cpms_options: dict[str, list[CpmsConfig]] = field(default_factory=dict)
 
 
-class RatioCoordinator(DataUpdateCoordinator[RatioData]):
+class RatioCoordinator(_TransientGraceMixin, DataUpdateCoordinator[RatioData]):
     """Coordinator that polls the Ratio cloud for charger state, settings, and vehicles."""
 
     def __init__(
@@ -131,9 +179,7 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         # Issue #88: grace a single consecutive transient chargers_overview
         # failure (after its own retry) by returning cached data instead of
         # flipping every entity to unavailable for one poll.
-        self.last_update_stale: bool = False
-        self._overview_grace_count = 0
-        self._overview_last_success: _datetime_type | None = None
+        self._init_grace()
         # Pending post-write settle refresh, if any. See POST_WRITE_SETTLE_SECONDS.
         self._settle_unsub: CALLBACK_TYPE | None = None
         self._prefs_store: Store[dict[str, Any]] = Store(
@@ -205,33 +251,12 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
             raise UpdateFailed(f"rate limited; backing off: {err}") from err
         except (RatioConnectionError, RatioApiError) as err:
             # Issue #88: a transient failure that survives the retry above is
-            # graced for one cycle (cached data kept, entities stay available)
-            # as long as this isn't already the second consecutive suppressed
-            # failure and we actually have cached data to fall back to.
-            if (
-                self.data is not None
-                and _is_transient(err)
-                and self._overview_grace_count == 0
-            ):
-                self._overview_grace_count += 1
-                self.last_update_stale = True
-                age = (
-                    dt_util.utcnow() - self._overview_last_success
-                    if self._overview_last_success is not None
-                    else None
-                )
-                _LOGGER.warning(
-                    "chargers_overview failed after retry, using cached data "
-                    "(age: %s): %s",
-                    age,
-                    err,
-                )
+            # graced for one cycle (cached data kept, entities stay available).
+            if self._try_grace("chargers_overview", err, self.data):
                 return self.data
             raise UpdateFailed(str(err)) from err
 
-        self._overview_grace_count = 0
-        self.last_update_stale = False
-        self._overview_last_success = dt_util.utcnow()
+        self._note_success()
 
         chargers = {ov.serial_number: ov for ov in overviews}
         prev: RatioData | None = self.data
@@ -494,7 +519,9 @@ def _session_begin(session: Session) -> int:
     return 0
 
 
-class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
+class RatioHistoryCoordinator(
+    _TransientGraceMixin, DataUpdateCoordinator[dict[str, list[Session]]]
+):
     """Polls the Ratio cloud for completed charge sessions and feeds external statistics.
 
     Keyed by charger serial; values are lists of recent ``Session`` objects sorted by
@@ -541,6 +568,10 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         # One-shot recovery is deferred until the first poll (background task)
         # so config-entry setup is not blocked by a cloud fetch.
         self._recovery_attempted = False
+        # Issue #88: grace a single consecutive transient session_history
+        # failure (after its own retry) by returning the cached sessions dict
+        # instead of flipping statistics/last-session sensors unavailable.
+        self._init_grace()
 
     async def async_load(self) -> None:
         """Hydrate persisted pagination + dedup + running-total state from disk."""
@@ -863,6 +894,14 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
             except RatioRateLimitError as err:
                 raise UpdateFailed(f"rate limited; backing off: {err}") from err
             except (RatioConnectionError, RatioApiError) as err:
+                # Issue #88: grace a transient failure for one whole cycle,
+                # same as the main coordinator. Earlier serials in this loop
+                # already had their statistics imported and cursors advanced
+                # in memory; those are simply persisted again on the next
+                # successful save, exactly as on the plain UpdateFailed path
+                # below (which also discards this cycle's in-memory `result`).
+                if self._try_grace("session_history", err, self.data):
+                    return self.data
                 raise UpdateFailed(str(err)) from err
 
             seen = set(self._seen_ids.get(serial, []))
@@ -946,5 +985,6 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
             merged = sorted(unique.values(), key=_session_begin)
             result[serial] = merged[-DEDUP_ID_LIMIT:]
 
+        self._note_success()
         await self._async_save(result)
         return result

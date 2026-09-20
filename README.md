@@ -213,7 +213,7 @@ The cloud locks settings **selectively**, field by field, and the integration mi
 
 A controller must therefore not treat one unavailable entity as "the charger is down". Check the entity you actually need, and use the binary sensors for connectivity.
 
-A transient `chargers_overview()` failure is a separate case from a locked field: it's retried once, and if a prior poll has data, one cycle is graced (stale data returned, entities stay available, a `WARNING` is logged) before entities would go unavailable on a second consecutive failure (#88).
+A transient `chargers_overview()` failure is a separate case from a locked field: it's retried once, and if a prior poll has data, one cycle is graced (stale data returned, entities stay available, a `WARNING` is logged) before entities would go unavailable on a second consecutive failure (#88). The session-history poll gets the same retry-once-then-grace-once treatment, so statistics and last-session sensors survive a lone transient failure too.
 
 ### Write and confirm timing
 
@@ -251,6 +251,7 @@ Related: a write that requests the value the entity already reports is suppresse
 ```
 
 - One `DataUpdateCoordinator` per config entry (account). All entities for all chargers under that account share it. Each poll calls `chargers_overview()` plus per-charger `user_settings`, `solar_settings`, `diagnostics`, and `ocpp_settings` in parallel; CPMS options are refreshed every 10th tick (~10 min). Entities select their slice from the aggregated `RatioData` snapshot. On a graced cycle (#88) that snapshot is the previous poll's data, unchanged, with `last_update_stale = True` set on the coordinator; a graced cycle carries no fresh cloud read, so it does not clear the number entities' post-write suppression guard (#69).
+- A second `RatioHistoryCoordinator`, also per config entry, polls `session_history()` every 5 minutes to feed `ratio:energy_<serial>` statistics and the last-session sensors. It shares the same retry-once-then-grace-once behaviour (#88), but grace is a whole-update decision: if any one charger's fetch fails transiently (after its own retry), the entire cycle returns the previous cached sessions dict unchanged for every charger, rather than saving a partial update for the chargers that did succeed.
 - Token storage uses `aioratio.JsonFileTokenStore` rooted at `hass.config.path(".storage/ratio_<entry_id>.tokens")`. The Cognito DeviceKey/DeviceGroupKey/DevicePassword are persisted alongside the access/refresh tokens so subsequent restarts use the DEVICE_SRP_AUTH fast-path without re-prompting.
 - On `RatioAuthError` during initial login or coordinator refresh, HA raises `ConfigEntryAuthFailed`, triggers reauth, and prompts for a new password. If setup fails after the client has connected, the client session is cleaned up before re-raising.
 

@@ -21,7 +21,12 @@ All notable changes to this project will be documented in this file.
   genuine success in between resets the failure counter. There is no grace at startup — a
   first refresh that fails still fails setup and HA retries as before. 4xx errors, auth errors
   (which still trigger reauth), and 429 rate limiting are unchanged: not retried, not graced.
-  The history (session import) coordinator gets the same retry-once treatment, without grace.
+  The history (session import) coordinator, which polls every 5 minutes, gets the identical
+  treatment: retry once, then one graced 5-minute cycle returning the cached sessions dict
+  (statistics and last-session sensors stay available), with a second consecutive failure
+  taking it `unavailable`. Grace is a whole-update decision, not per-charger — if any one
+  charger's fetch fails transiently after its retry, the entire cycle is graced and the
+  previous cached sessions for every charger are returned unchanged.
   A graced cycle carries no fresh cloud read, so it does not clear the number entities'
   post-write suppression guard (#69) — a write made just before a graced cycle is still only
   confirmed on the next real successful poll.
