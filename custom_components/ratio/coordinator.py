@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime as _datetime_type
@@ -57,6 +58,36 @@ from .statistics import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _is_transient(err: Exception) -> bool:
+    """Whether ``err`` is a connection error or a 5xx API error worth retrying.
+
+    ``RatioRateLimitError`` is a subclass of ``RatioApiError`` but is
+    deliberately excluded even when it carries a 5xx-flavoured status — rate
+    limiting has its own backoff handling and must never be retried here.
+    """
+    if isinstance(err, RatioConnectionError):
+        return True
+    if isinstance(err, RatioRateLimitError):
+        return False
+    return (
+        isinstance(err, RatioApiError) and err.status is not None and err.status >= 500
+    )
+
+
+async def _retry_once[T](fetch: Callable[[], Awaitable[T]]) -> T:
+    """Attempt ``fetch``; on a transient error, sleep jittered and try once more.
+
+    The second attempt's error (transient or not) propagates to the caller.
+    """
+    try:
+        return await fetch()
+    except (RatioConnectionError, RatioApiError) as err:
+        if not _is_transient(err):
+            raise
+        await asyncio.sleep(random.uniform(1, 3))
+        return await fetch()
+
+
 @dataclass
 class RatioData:
     """Aggregate state cached by the coordinator each cycle."""
@@ -97,6 +128,12 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         self._prefs_lock = asyncio.Lock()
         # Track last CPMS fetch time; refresh at most every 10 minutes.
         self._cpms_last_fetch: _datetime_type | None = None
+        # Issue #88: grace a single consecutive transient chargers_overview
+        # failure (after its own retry) by returning cached data instead of
+        # flipping every entity to unavailable for one poll.
+        self.last_update_stale: bool = False
+        self._overview_grace_count = 0
+        self._overview_last_success: _datetime_type | None = None
         # Pending post-write settle refresh, if any. See POST_WRITE_SETTLE_SECONDS.
         self._settle_unsub: CALLBACK_TYPE | None = None
         self._prefs_store: Store[dict[str, Any]] = Store(
@@ -160,14 +197,41 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
     async def _async_update_data(self) -> RatioData:
         """Fetch chargers, then per-charger user/solar settings + vehicles in parallel."""
         try:
-            overviews = await self.client.chargers_overview()
+            overviews = await _retry_once(self.client.chargers_overview)
         except RatioAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except RatioRateLimitError as err:
             # Subclass of RatioApiError — must be caught first.
             raise UpdateFailed(f"rate limited; backing off: {err}") from err
         except (RatioConnectionError, RatioApiError) as err:
+            # Issue #88: a transient failure that survives the retry above is
+            # graced for one cycle (cached data kept, entities stay available)
+            # as long as this isn't already the second consecutive suppressed
+            # failure and we actually have cached data to fall back to.
+            if (
+                self.data is not None
+                and _is_transient(err)
+                and self._overview_grace_count == 0
+            ):
+                self._overview_grace_count += 1
+                self.last_update_stale = True
+                age = (
+                    dt_util.utcnow() - self._overview_last_success
+                    if self._overview_last_success is not None
+                    else None
+                )
+                _LOGGER.warning(
+                    "chargers_overview failed after retry, using cached data "
+                    "(age: %s): %s",
+                    age,
+                    err,
+                )
+                return self.data
             raise UpdateFailed(str(err)) from err
+
+        self._overview_grace_count = 0
+        self.last_update_stale = False
+        self._overview_last_success = dt_util.utcnow()
 
         chargers = {ov.serial_number: ov for ov in overviews}
         prev: RatioData | None = self.data
@@ -786,8 +850,14 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                     )
 
             begin_time = self._begin_time_for(serial, now_ts)
+
+            async def _fetch(
+                serial: str = serial, begin_time: int = begin_time
+            ) -> list[Session]:
+                return await self._fetch_all_pages(serial, begin_time)
+
             try:
-                fetched = await self._fetch_all_pages(serial, begin_time)
+                fetched = await _retry_once(_fetch)
             except RatioAuthError as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
             except RatioRateLimitError as err:

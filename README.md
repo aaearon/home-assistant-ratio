@@ -68,7 +68,7 @@ One device per charger, with the following entities:
 | text (config) | `charge_point_identifier` | `installerOcpp` settings — writable OCPP CPID |
 | — | `ratio:energy_<serial>` (external statistic) | long-term energy statistics imported from session history via `import_session_history` |
 
-Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle, regardless of how many chargers).
+Polling interval defaults to **60 s** (one `chargers_overview()` call per cycle, regardless of how many chargers). A connection error or HTTP 5xx on that call is retried once after a short jittered delay; if it still fails and a previous poll succeeded, one graced cycle serves stale data instead of going unavailable — see [Unavailable is not the same as offline](#unavailable-is-not-the-same-as-offline).
 
 ### Services
 
@@ -213,6 +213,8 @@ The cloud locks settings **selectively**, field by field, and the integration mi
 
 A controller must therefore not treat one unavailable entity as "the charger is down". Check the entity you actually need, and use the binary sensors for connectivity.
 
+A transient `chargers_overview()` failure is a separate case from a locked field: it's retried once, and if a prior poll has data, one cycle is graced (stale data returned, entities stay available, a `WARNING` is logged) before entities would go unavailable on a second consecutive failure (#88).
+
 ### Write and confirm timing
 
 A write takes roughly 3–6 s to become visible to a subsequent read, so the integration defers its confirming refresh by `POST_WRITE_SETTLE_SECONDS` (10 s) rather than reading back a stale value; regular polling is every 60 s. A controller ticking faster than 10 s, re-arming the deferred refresh on every tick, produces no post-write refreshes at all. See [Stale or missing data](#stale-or-missing-data).
@@ -248,7 +250,7 @@ Related: a write that requests the value the entity already reports is suppresse
               (atomic write, mode 0600)
 ```
 
-- One `DataUpdateCoordinator` per config entry (account). All entities for all chargers under that account share it. Each poll calls `chargers_overview()` plus per-charger `user_settings`, `solar_settings`, `diagnostics`, and `ocpp_settings` in parallel; CPMS options are refreshed every 10th tick (~10 min). Entities select their slice from the aggregated `RatioData` snapshot.
+- One `DataUpdateCoordinator` per config entry (account). All entities for all chargers under that account share it. Each poll calls `chargers_overview()` plus per-charger `user_settings`, `solar_settings`, `diagnostics`, and `ocpp_settings` in parallel; CPMS options are refreshed every 10th tick (~10 min). Entities select their slice from the aggregated `RatioData` snapshot. On a graced cycle (#88) that snapshot is the previous poll's data, unchanged, with `last_update_stale = True` set on the coordinator; a graced cycle carries no fresh cloud read, so it does not clear the number entities' post-write suppression guard (#69).
 - Token storage uses `aioratio.JsonFileTokenStore` rooted at `hass.config.path(".storage/ratio_<entry_id>.tokens")`. The Cognito DeviceKey/DeviceGroupKey/DevicePassword are persisted alongside the access/refresh tokens so subsequent restarts use the DEVICE_SRP_AUTH fast-path without re-prompting.
 - On `RatioAuthError` during initial login or coordinator refresh, HA raises `ConfigEntryAuthFailed`, triggers reauth, and prompts for a new password. If setup fails after the client has connected, the client session is cleaned up before re-raising.
 
@@ -279,7 +281,7 @@ Related: a write that requests the value the entity already reports is suppresse
 
 ### Stale or missing data
 
-- Entities showing "unavailable": the charger may be offline or the Ratio cloud may be unreachable. Check your charger's internet connection.
+- Entities showing "unavailable": the charger may be offline or the Ratio cloud may be unreachable. Check your charger's internet connection. A single transient cloud failure is retried and, if data exists from a prior poll, graced for one cycle (a `WARNING` in the logs, no unavailable entities) — you'll only see `unavailable` after two consecutive failing cycles (#88).
 - Settings not updating: the integration polls every 60 seconds. If you changed a setting via the Ratio app, wait up to a minute for HA to reflect it.
 - After a restart, entities may briefly show "unknown" until the first poll completes.
 - Settings changed **from Home Assistant** take about 10 seconds to show their confirmed value. The cloud needs a few seconds to make a write visible to a subsequent read, so the post-write refresh is deliberately deferred (`POST_WRITE_SETTLE_SECONDS`) rather than reading back stale data.

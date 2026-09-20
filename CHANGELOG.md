@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.16.2] — 2026-09-20
+
+### Fixed
+
+- **Transient cloud 500s on `chargers_overview()` no longer flip every entity to `unavailable` for a full poll cycle (#88).**
+  The Ratio cloud intermittently returns HTTP 500 on `chargers_overview()` (~8 times in 3 days
+  observed on one instance), and the polling coordinator previously raised `UpdateFailed` on
+  the first such failure, so every cloud-backed entity went `unavailable` for one 60 s cycle.
+  A connection error or HTTP 5xx on `chargers_overview()` is now retried once after a 1–3 s
+  jittered sleep. If the retry also fails and the coordinator already holds data from a prior
+  successful poll, it grants **one grace cycle**: it logs a `WARNING` (with the error and the
+  age of the cached data), returns the previous data unchanged, and sets
+  `last_update_stale = True` — entities stay available and unaffected. A second consecutive
+  failing cycle still raises `UpdateFailed` as before, taking entities `unavailable`; any
+  genuine success in between resets the failure counter. There is no grace at startup — a
+  first refresh that fails still fails setup and HA retries as before. 4xx errors, auth errors
+  (which still trigger reauth), and 429 rate limiting are unchanged: not retried, not graced.
+  The history (session import) coordinator gets the same retry-once treatment, without grace.
+  A graced cycle carries no fresh cloud read, so it does not clear the number entities'
+  post-write suppression guard (#69) — a write made just before a graced cycle is still only
+  confirmed on the next real successful poll.
+
 ## [0.16.1] — 2026-09-07
 
 ### Fixed

@@ -887,3 +887,72 @@ async def test_recovery_skipped_when_seen_ids_empty(hass: HomeAssistant) -> None
     # Exactly one call — the normal first poll. Recovery skipped.
     assert client.session_history.await_count == 1
     assert coord._recovery_attempted is True
+
+
+# ---------------------------------------------------------------------------
+# Transient connection-error / 5xx retry on session_history (issue #88)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_pages_connection_error_retries_once_then_succeeds(
+    hass: HomeAssistant,
+) -> None:
+    """A single connection error during the history fetch is retried once."""
+    from aioratio.exceptions import RatioConnectionError
+
+    serial = "S_RETRY"
+    entry = _make_entry(hass, entry_id="e_retry")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    client.session_history = AsyncMock(
+        side_effect=[
+            RatioConnectionError("timeout"),
+            SessionHistoryPage(sessions=[s1], next_token=None),
+        ]
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with (
+        _patch_import() as mock_import,
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+    ):
+        await coord.async_config_entry_first_refresh()
+
+    assert coord.last_update_success is True
+    mock_sleep.assert_awaited_once()
+    delay = mock_sleep.call_args.args[0]
+    assert 1 <= delay <= 3
+    args = mock_import.await_args_list[0].args
+    assert [s.session_id for s in args[2]] == ["id-1"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_pages_4xx_raises_update_failed_no_retry(
+    hass: HomeAssistant,
+) -> None:
+    """A 4xx status during the history fetch is never retried."""
+    from aioratio.exceptions import RatioApiError
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    serial = "S_4XX"
+    entry = _make_entry(hass, entry_id="e_4xx")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+    client.session_history = AsyncMock(side_effect=RatioApiError("nope", status=404))
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with (
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+        pytest.raises(UpdateFailed),
+    ):
+        await coord._async_update_data()
+
+    assert client.session_history.await_count == 1
+    mock_sleep.assert_not_awaited()

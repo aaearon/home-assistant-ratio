@@ -312,8 +312,13 @@ class _RatioNumberBase(CoordinatorEntity[RatioCoordinator], NumberEntity):
         and fails toward sending, so a write that never landed server-side is
         retried instead of being suppressed forever by a target that will
         never arrive.
+
+        Skipped while ``coordinator.last_update_stale`` is True (issue #88): a
+        graced cycle carries no fresh cloud read, so clearing here would drop
+        the guard before a real update ever arrives.
         """
-        self._pending_target = None
+        if not self.coordinator.last_update_stale:
+            self._pending_target = None
         super()._handle_coordinator_update()
 
     async def async_set_native_value(self, value: float) -> None:

@@ -65,6 +65,7 @@ def _make_coordinator(
     serial: str = SERIAL,
 ) -> MagicMock:
     coord = MagicMock()
+    coord.last_update_stale = False
     coord.data = RatioData(
         solar_settings={serial: solar} if solar is not None else {},
         user_settings={serial: user} if user is not None else {},
@@ -1002,6 +1003,33 @@ async def test_a_coordinator_update_clears_the_pending_target() -> None:
 
     await entity.async_set_native_value(20.0)
     assert client.set_user_settings.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stale_coordinator_update_does_not_clear_pending_target() -> None:
+    """During a graced (stale) update the #69 guard must hold (issue #88).
+
+    HA's ``always_update`` default fires listeners even when the coordinator
+    returns the same ``data`` object unchanged. If a stale/graced update
+    cleared ``_pending_target`` the same way a genuine update does, the #66/#69
+    no-op suppression would reopen on every graced poll.
+    """
+    coord = _make_coordinator(_solar(), _user())
+    client = MagicMock()
+    client.set_user_settings = AsyncMock()
+
+    entity = RatioMaximumChargingCurrentNumber(coord, client, SERIAL)
+    await entity.async_set_native_value(20.0)
+    assert entity._pending_target == 20
+
+    entity.async_write_ha_state = MagicMock()
+    coord.last_update_stale = True
+    entity._handle_coordinator_update()
+    assert entity._pending_target == 20
+
+    coord.last_update_stale = False
+    entity._handle_coordinator_update()
+    assert entity._pending_target is None
 
 
 @pytest.mark.asyncio
