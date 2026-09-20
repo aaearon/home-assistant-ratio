@@ -853,8 +853,9 @@ class RatioHistoryCoordinator(
         # persisted store) is left holding the old, pre-cycle result, and the
         # earlier serial's new session is silently dropped on the next
         # successful cycle (it's in ``_seen_ids`` but not in ``self.data``).
-        # So fetching is fully separated from processing: nothing below this
-        # loop touches per-serial bookkeeping.
+        # So fetching is fully separated from processing: the only in-memory
+        # write in this loop is the recorder seeding below, which is derived
+        # from the recorder alone (never from anything fetched this cycle).
         fetch_results: dict[str, tuple[list[Session], int | None]] = {}
 
         for serial in serials:
@@ -909,10 +910,10 @@ class RatioHistoryCoordinator(
                 raise UpdateFailed(f"rate limited; backing off: {err}") from err
             except (RatioConnectionError, RatioApiError) as err:
                 # Issue #88: grace a transient failure for one whole cycle,
-                # same as the main coordinator. With fetching and processing
-                # now split into two phases, no serial -- earlier or later in
-                # this loop -- has had anything imported, persisted, or
-                # mutated in memory yet, so there is nothing to undo here.
+                # same as the main coordinator. Fetching and processing are
+                # split into two phases, so nothing fetched this cycle has
+                # been imported, surfaced, or persisted for any serial and
+                # there is nothing to undo here.
                 if self._try_grace("session_history", err, self.data):
                     return self.data
                 raise UpdateFailed(str(err)) from err
