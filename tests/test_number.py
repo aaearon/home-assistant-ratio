@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from datetime import timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aioratio.models import (
@@ -1030,6 +1030,90 @@ async def test_stale_coordinator_update_does_not_clear_pending_target() -> None:
     coord.last_update_stale = False
     entity._handle_coordinator_update()
     assert entity._pending_target is None
+
+
+@pytest.mark.asyncio
+async def test_stale_coordinator_refresh_keeps_pending_target_armed(
+    hass: HomeAssistant,
+    setup_integration,
+    mock_ratio_client: MagicMock,
+) -> None:
+    """Real end-to-end coverage for issue #88's interaction with the #69 guard.
+
+    ``test_stale_coordinator_update_does_not_clear_pending_target`` above only
+    calls ``entity._handle_coordinator_update()`` against a ``MagicMock``
+    coordinator, which proves the guard's own conditional but not that a real
+    ``RatioCoordinator`` refresh — retry, grace, and HA's always-update
+    listener dispatch included — actually reaches it. This drives a real
+    ``coordinator.async_refresh()`` through a transient-failure grace cycle
+    with the integration fully set up and a registered number entity.
+    """
+    from aioratio.exceptions import RatioApiError
+
+    coordinator = setup_integration.runtime_data.coordinator
+    client = mock_ratio_client.return_value
+
+    overview = ChargerOverview.from_dict({"serialNumber": SERIAL})
+    client.chargers_overview = AsyncMock(return_value=[overview])
+    client.user_settings = AsyncMock(return_value=_user())
+
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get(_SERVICE_ENTITY_ID).state == "16.0"
+
+    # Arm the #66/#69 guard via a real service call.
+    await hass.services.async_call(
+        "number",
+        "set_value",
+        {"entity_id": _SERVICE_ENTITY_ID, "value": 20},
+        blocking=True,
+    )
+    client.set_user_settings.assert_awaited_once()
+
+    # Cloud goes transient: the retry also fails, but cached data exists, so
+    # this cycle must be graced rather than raising UpdateFailed.
+    client.chargers_overview = AsyncMock(
+        side_effect=[
+            RatioApiError("boom", status=500),
+            RatioApiError("boom again", status=500),
+        ]
+    )
+    with patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()):
+        await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert coordinator.last_update_success is True
+    assert coordinator.last_update_stale is True
+
+    state = hass.states.get(_SERVICE_ENTITY_ID)
+    assert state is not None
+    assert state.state != STATE_UNAVAILABLE
+    assert state.state == "16.0"
+
+    # The guard must still be armed: an identical write sends no new PUT.
+    await hass.services.async_call(
+        "number",
+        "set_value",
+        {"entity_id": _SERVICE_ENTITY_ID, "value": 20},
+        blocking=True,
+    )
+    client.set_user_settings.assert_awaited_once()
+
+    # Cloud recovers; the next real refresh is not stale and clears the guard.
+    client.chargers_overview = AsyncMock(return_value=[overview])
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+
+    assert coordinator.last_update_stale is False
+
+    # The guard is gone: an identical write now reaches the client again.
+    await hass.services.async_call(
+        "number",
+        "set_value",
+        {"entity_id": _SERVICE_ENTITY_ID, "value": 20},
+        blocking=True,
+    )
+    assert client.set_user_settings.await_count == 2
 
 
 @pytest.mark.asyncio
