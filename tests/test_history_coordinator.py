@@ -1258,6 +1258,94 @@ async def test_history_grace_returns_full_cached_dict_when_second_serial_fails(
 
 
 @pytest.mark.asyncio
+async def test_history_grace_does_not_lose_earlier_serial_sessions_on_recovery(
+    hass: HomeAssistant,
+) -> None:
+    """Issue #88 two-phase fix: a later serial's graced failure must not
+    strand an earlier serial's already-fetched-but-unprocessed session.
+
+    Serial A (earlier in iteration order) fetches a new session (a-2) in the
+    same cycle serial B fails transiently twice and triggers grace. Because
+    fetch and processing must be two separate phases, A's a-2 must not be
+    imported, deduped, or surfaced during the graced cycle -- it must be
+    fetched and processed again, exactly once, on the next successful cycle.
+    """
+    from aioratio.exceptions import RatioApiError
+
+    serial_a, serial_b = "S_A", "S_B"
+    entry = _make_entry(hass, entry_id="e_recovery")
+    main = _make_main_coordinator([serial_a, serial_b])
+    client = MagicMock()
+
+    sa1 = _session("a-1", serial_a, 1_700_000_000, energy=1000)
+    sb1 = _session("b-1", serial_b, 1_700_000_000, energy=1000)
+    sa2 = _session("a-2", serial_a, 1_700_010_000, energy=1000)
+
+    queues: dict[str, list[Any]] = {
+        serial_a: [
+            SessionHistoryPage(sessions=[sa1], next_token=None),  # cycle 1
+            SessionHistoryPage(sessions=[sa2], next_token=None),  # cycle 2 (graced)
+            SessionHistoryPage(sessions=[sa2], next_token=None),  # cycle 3 (recovery)
+        ],
+        serial_b: [
+            SessionHistoryPage(sessions=[sb1], next_token=None),  # cycle 1
+            RatioApiError("boom1", status=500),  # cycle 2, first attempt
+            RatioApiError("boom2", status=500),  # cycle 2, retry
+            SessionHistoryPage(
+                sessions=[sb1], next_token=None
+            ),  # cycle 3, known/cached
+        ],
+    }
+
+    def _session_history_side_effect(**kwargs: Any) -> SessionHistoryPage:
+        item = queues[kwargs["serial_number"]].pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    client.session_history = AsyncMock(side_effect=_session_history_side_effect)
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with (
+        _patch_import() as mock_import,
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+    ):
+        # Cycle 1: both serials succeed, establishing the cached baseline.
+        await coord.async_config_entry_first_refresh()
+        cached = coord.data
+        assert [s.session_id for s in cached[serial_a]] == ["a-1"]
+        assert [s.session_id for s in cached[serial_b]] == ["b-1"]
+
+        # Cycle 2: A fetches a-2 successfully; B fails transiently twice and
+        # is graced. Two-phase fix: A's fetch must not be processed either.
+        await coord.async_refresh()
+        assert coord.last_update_success is True
+        assert coord.last_update_stale is True
+        assert coord.data is cached
+        assert [s.session_id for s in coord.data[serial_a]] == ["a-1"]
+        assert "a-2" not in coord._seen_ids.get(serial_a, [])
+        assert not any(
+            call.args[2] and call.args[2][0].session_id == "a-2"
+            for call in mock_import.await_args_list
+        )
+
+        # Cycle 3: recovery. A re-fetches a-2 (overlap window); B returns its
+        # already-known session b-1 (no-op dedup).
+        await coord.async_refresh()
+
+    assert coord.last_update_success is True
+    assert coord.last_update_stale is False
+    assert [s.session_id for s in coord.data[serial_a]] == ["a-1", "a-2"]
+
+    a2_imports = [
+        call
+        for call in mock_import.await_args_list
+        if call.args[2] and any(s.session_id == "a-2" for s in call.args[2])
+    ]
+    assert len(a2_imports) == 1
+
+
+@pytest.mark.asyncio
 async def test_history_rate_limit_not_retried_not_graced(hass: HomeAssistant) -> None:
     """A rate-limit error is never retried and never graced, even with cached data."""
     from aioratio.exceptions import RatioRateLimitError

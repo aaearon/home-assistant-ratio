@@ -250,7 +250,7 @@ Related: a write that requests the value the entity already reports is suppresse
               (atomic write, mode 0600)
 ```
 
-- One `DataUpdateCoordinator` per config entry (account). All entities for all chargers under that account share it. Each poll calls `chargers_overview()` plus per-charger `user_settings`, `solar_settings`, `diagnostics`, and `ocpp_settings` in parallel; CPMS options are refreshed every 10th tick (~10 min). Entities select their slice from the aggregated `RatioData` snapshot. On a graced cycle (#88) that snapshot is the previous poll's data, unchanged, with `last_update_stale = True` set on the coordinator; a graced cycle carries no fresh cloud read, so it does not clear the number entities' post-write suppression guard (#69).
+- One `DataUpdateCoordinator` per config entry (account). All entities for all chargers under that account share it. Each poll calls `chargers_overview()` plus per-charger `user_settings`, `solar_settings`, `diagnostics`, and `ocpp_settings` in parallel; CPMS options are refreshed every 10th tick (~10 min). Entities select their slice from the aggregated `RatioData` snapshot. On a graced cycle (#88) that snapshot is the previous poll's data, unchanged, with `last_update_stale = True` set on the coordinator; a graced state-poll cycle carries no fresh read of charger state, so it does not clear the number entities' post-write suppression guard (#69).
 - A second `RatioHistoryCoordinator`, also per config entry, polls `session_history()` every 5 minutes to feed `ratio:energy_<serial>` statistics and the last-session sensors. It shares the same retry-once-then-grace-once behaviour (#88), but grace is a whole-update decision: if any one charger's fetch fails transiently (after its own retry), the entire cycle returns the previous cached sessions dict unchanged for every charger, rather than saving a partial update for the chargers that did succeed.
 - Token storage uses `aioratio.JsonFileTokenStore` rooted at `hass.config.path(".storage/ratio_<entry_id>.tokens")`. The Cognito DeviceKey/DeviceGroupKey/DevicePassword are persisted alongside the access/refresh tokens so subsequent restarts use the DEVICE_SRP_AUTH fast-path without re-prompting.
 - On `RatioAuthError` during initial login or coordinator refresh, HA raises `ConfigEntryAuthFailed`, triggers reauth, and prompts for a new password. If setup fails after the client has connected, the client session is cleaned up before re-raising.
@@ -420,9 +420,11 @@ cache. Two sources feed it, in order:
 1. A **pending target** — the value of the last successful PUT. While one
    exists the cache is known-stale and is not consulted at all (cache 16 plus a
    pending 20 makes a request for 16 a real change). It is cleared on the next
-   coordinator update, whatever that update reports: suppression is therefore
-   bounded to at most one refresh cycle, and a write that never landed
-   server-side is retried rather than suppressed forever. Without it the
+   *non-stale* coordinator update, whatever that update reports: suppression
+   is therefore bounded to at most one *real* refresh cycle, and a write that
+   never landed server-side is retried rather than suppressed forever. A
+   graced cycle (#88, `last_update_stale`) preserves it instead, since it
+   carries no fresh read of the charger state. Without it the
    headline case stays broken — a PUT takes 3-6 s to become readable and the
    confirming refresh waits 10 s, so a controller re-asserting its target
    faster than that would PUT on every tick while the cache still held the old

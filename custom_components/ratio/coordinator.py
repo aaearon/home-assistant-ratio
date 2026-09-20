@@ -844,14 +844,28 @@ class RatioHistoryCoordinator(
             self._recovery_attempted = True
 
         now_ts = int(dt_util.utcnow().timestamp())
-        result: dict[str, list[Session]] = {}
+
+        # Phase 1: fetch every serial before processing any of them. Issue
+        # #88: if a later serial's fetch fails and is graced (or raises
+        # UpdateFailed), no earlier serial may have already had its
+        # statistics imported or its cursor/seen-ids advanced in memory --
+        # otherwise that mutation survives even though ``self.data`` (and the
+        # persisted store) is left holding the old, pre-cycle result, and the
+        # earlier serial's new session is silently dropped on the next
+        # successful cycle (it's in ``_seen_ids`` but not in ``self.data``).
+        # So fetching is fully separated from processing: nothing below this
+        # loop touches per-serial bookkeeping.
+        fetch_results: dict[str, tuple[list[Session], int | None]] = {}
 
         for serial in serials:
             # Seed before computing the fetch window, so the window itself is
             # already correct. A remove-and-re-add wipes the whole per-entry_id
             # store while the per-serial recorder series survives (issue #84):
             # without this the poll would refetch HISTORY_BACKFILL_DAYS of
-            # already-imported sessions and rewrite their rows.
+            # already-imported sessions and rewrite their rows. Safe to do
+            # here in the fetch phase even if a later serial's fetch fails
+            # this cycle: it is derived straight from the recorder, not from
+            # anything fetched this cycle, and idempotent to repeat.
             seeded_hour_ts: int | None = None
             if (
                 serial not in self._running_total
@@ -895,15 +909,21 @@ class RatioHistoryCoordinator(
                 raise UpdateFailed(f"rate limited; backing off: {err}") from err
             except (RatioConnectionError, RatioApiError) as err:
                 # Issue #88: grace a transient failure for one whole cycle,
-                # same as the main coordinator. Earlier serials in this loop
-                # already had their statistics imported and cursors advanced
-                # in memory; those are simply persisted again on the next
-                # successful save, exactly as on the plain UpdateFailed path
-                # below (which also discards this cycle's in-memory `result`).
+                # same as the main coordinator. With fetching and processing
+                # now split into two phases, no serial -- earlier or later in
+                # this loop -- has had anything imported, persisted, or
+                # mutated in memory yet, so there is nothing to undo here.
                 if self._try_grace("session_history", err, self.data):
                     return self.data
                 raise UpdateFailed(str(err)) from err
 
+            fetch_results[serial] = (fetched, seeded_hour_ts)
+
+        # Phase 2: process every successfully fetched serial. Reaching this
+        # point means every serial's fetch above succeeded.
+        result: dict[str, list[Session]] = {}
+
+        for serial, (fetched, seeded_hour_ts) in fetch_results.items():
             seen = set(self._seen_ids.get(serial, []))
             new_sessions: list[Session] = []
             for s in fetched:

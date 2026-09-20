@@ -26,10 +26,13 @@ All notable changes to this project will be documented in this file.
   (statistics and last-session sensors stay available), with a second consecutive failure
   taking it `unavailable`. Grace is a whole-update decision, not per-charger — if any one
   charger's fetch fails transiently after its retry, the entire cycle is graced and the
-  previous cached sessions for every charger are returned unchanged.
-  A graced cycle carries no fresh cloud read, so it does not clear the number entities'
-  post-write suppression guard (#69) — a write made just before a graced cycle is still only
-  confirmed on the next real successful poll.
+  previous cached sessions for every charger are returned unchanged. Fetching and processing
+  are two separate phases, so a later charger's graced (or outright failing) fetch cannot
+  strand an earlier charger's already-fetched sessions: nothing is imported or persisted for
+  any charger on a graced history cycle, so no session can be lost.
+  A graced state-poll cycle carries no fresh read of charger state, so it does not clear the
+  number entities' post-write suppression guard (#69) — a write made just before a graced
+  cycle is still only confirmed on the next real successful poll.
 
 ## [0.16.1] — 2026-09-07
 
