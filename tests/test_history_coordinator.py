@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, ExitStack, contextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -887,3 +889,527 @@ async def test_recovery_skipped_when_seen_ids_empty(hass: HomeAssistant) -> None
     # Exactly one call — the normal first poll. Recovery skipped.
     assert client.session_history.await_count == 1
     assert coord._recovery_attempted is True
+
+
+# ---------------------------------------------------------------------------
+# Transient connection-error / 5xx retry on session_history (issue #88)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_pages_connection_error_retries_once_then_succeeds(
+    hass: HomeAssistant,
+) -> None:
+    """A single connection error during the history fetch is retried once."""
+    from aioratio.exceptions import RatioConnectionError
+
+    serial = "S_RETRY"
+    entry = _make_entry(hass, entry_id="e_retry")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    client.session_history = AsyncMock(
+        side_effect=[
+            RatioConnectionError("timeout"),
+            SessionHistoryPage(sessions=[s1], next_token=None),
+        ]
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with (
+        _patch_import() as mock_import,
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+    ):
+        await coord.async_config_entry_first_refresh()
+
+    assert coord.last_update_success is True
+    mock_sleep.assert_awaited_once()
+    delay = mock_sleep.call_args.args[0]
+    assert 1 <= delay <= 3
+    args = mock_import.await_args_list[0].args
+    assert [s.session_id for s in args[2]] == ["id-1"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_pages_4xx_raises_update_failed_no_retry(
+    hass: HomeAssistant,
+) -> None:
+    """A 4xx status during the history fetch is never retried."""
+    from aioratio.exceptions import RatioApiError
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    serial = "S_4XX"
+    entry = _make_entry(hass, entry_id="e_4xx")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+    client.session_history = AsyncMock(side_effect=RatioApiError("nope", status=404))
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with (
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+        pytest.raises(UpdateFailed),
+    ):
+        await coord._async_update_data()
+
+    assert client.session_history.await_count == 1
+    mock_sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_history_5xx_twice_with_cached_data_grants_grace(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """5xx on both the try and the retry, with cached data, is graced once.
+
+    The whole cached dict is returned unchanged, ``last_update_stale`` is set,
+    and neither statistics import nor the persisted store is touched again.
+    """
+    from aioratio.exceptions import RatioApiError
+
+    serial = "S_GRACE"
+    entry = _make_entry(hass, entry_id="e_grace")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with _patch_import() as mock_import:
+        await coord.async_config_entry_first_refresh()
+    cached = coord.data
+    assert mock_import.await_count == 1
+
+    client.session_history = AsyncMock(
+        side_effect=[
+            RatioApiError("boom", status=500),
+            RatioApiError("boom again", status=500),
+        ]
+    )
+    save_spy = AsyncMock(wraps=coord._async_save)
+
+    with (
+        _patch_import() as mock_import2,
+        patch.object(coord, "_async_save", save_spy),
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+        caplog.at_level(logging.WARNING),
+    ):
+        await coord.async_refresh()
+
+    assert coord.last_update_success is True
+    assert coord.last_update_stale is True
+    assert coord.data is cached
+    assert coord.data[serial][0].session_id == "id-1"
+    mock_sleep.assert_awaited_once()
+    assert any(
+        record.levelno == logging.WARNING and "cached" in record.getMessage().lower()
+        for record in caplog.records
+    )
+    mock_import2.assert_not_awaited()
+    save_spy.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_history_5xx_second_consecutive_graced_cycle_fails(
+    hass: HomeAssistant,
+) -> None:
+    """A second consecutive graced cycle raises UpdateFailed (no more grace)."""
+    from aioratio.exceptions import RatioApiError
+
+    serial = "S_GRACE2"
+    entry = _make_entry(hass, entry_id="e_grace2")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+
+    client.session_history = AsyncMock(
+        side_effect=[RatioApiError("1", status=500), RatioApiError("2", status=500)]
+    )
+    with (
+        _patch_import(),
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+    ):
+        await coord.async_refresh()  # first graced cycle
+    assert coord.last_update_success is True
+    assert coord.last_update_stale is True
+
+    client.session_history = AsyncMock(
+        side_effect=[RatioApiError("3", status=500), RatioApiError("4", status=500)]
+    )
+    with (
+        _patch_import(),
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+    ):
+        await coord.async_refresh()  # second consecutive failure — no more grace
+
+    assert coord.last_update_success is False
+    assert coord.last_update_stale is True
+
+
+@pytest.mark.asyncio
+async def test_history_5xx_twice_with_no_data_raises_update_failed(
+    hass: HomeAssistant,
+) -> None:
+    """No grace at startup: a fresh coordinator with no cached data fails."""
+    from aioratio.exceptions import RatioApiError
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    serial = "S_STARTUP"
+    entry = _make_entry(hass, entry_id="e_startup")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+    client.session_history = AsyncMock(
+        side_effect=[RatioApiError("1", status=500), RatioApiError("2", status=500)]
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with (
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+        pytest.raises(UpdateFailed),
+    ):
+        await coord._async_update_data()
+
+    assert coord.data is None
+
+
+@pytest.mark.asyncio
+async def test_history_5xx_persisted_sessions_but_coord_data_none_not_graced(
+    hass: HomeAssistant,
+) -> None:
+    """Persisted-but-not-yet-loaded-into-``data`` sessions must not enable grace.
+
+    Grace is gated on ``coord.data is not None`` (a completed in-memory
+    update), not on the on-disk store having prior sessions. A coordinator
+    that has loaded persisted state (e.g. after a restart) but has not yet
+    completed a successful ``_async_update_data`` cycle must still raise
+    ``UpdateFailed`` on a transient failure.
+    """
+    from aioratio.exceptions import RatioApiError
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    serial = "S_PERSISTED"
+    entry = _make_entry(hass, entry_id="e_persisted")
+    main = _make_main_coordinator([serial])
+
+    # First coordinator: a normal successful refresh, persisting one session
+    # (and seen_ids) to the store backing this entry.
+    client1 = MagicMock()
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    client1.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    coord1 = RatioHistoryCoordinator(hass, client1, entry, main)
+    with _patch_import():
+        await coord1.async_config_entry_first_refresh()
+
+    # Second coordinator against the same store: loads persisted sessions
+    # into ``_persisted_sessions`` but never completes an update, so
+    # ``coord2.data`` is still None.
+    client2 = MagicMock()
+    client2.session_history = AsyncMock(
+        side_effect=[RatioApiError("1", status=500), RatioApiError("2", status=500)]
+    )
+    coord2 = RatioHistoryCoordinator(hass, client2, entry, main)
+    await coord2.async_load()
+    assert coord2._persisted_sessions.get(serial)
+    assert coord2.data is None
+
+    with (
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+        pytest.raises(UpdateFailed),
+    ):
+        await coord2._async_update_data()
+
+    assert coord2.data is None
+
+
+@pytest.mark.asyncio
+async def test_history_grace_then_success_then_grace_again(
+    hass: HomeAssistant,
+) -> None:
+    """Grace resets on a genuine success and can be granted again next time."""
+    from aioratio.exceptions import RatioApiError
+
+    serial = "S_CYCLE"
+    entry = _make_entry(hass, entry_id="e_cycle")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+    assert coord.last_update_stale is False
+
+    client.session_history = AsyncMock(
+        side_effect=[RatioApiError("1", status=500), RatioApiError("2", status=500)]
+    )
+    with (
+        _patch_import(),
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+    ):
+        await coord.async_refresh()
+    assert coord.last_update_stale is True
+    assert coord.last_update_success is True
+
+    s2 = _session("id-2", serial, 1_700_010_000, energy=1000)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s2], next_token=None)
+    )
+    with _patch_import():
+        await coord.async_refresh()
+    assert coord.last_update_stale is False
+    assert coord.last_update_success is True
+    assert {s.session_id for s in coord.data[serial]} == {"id-1", "id-2"}
+
+    client.session_history = AsyncMock(
+        side_effect=[RatioApiError("3", status=500), RatioApiError("4", status=500)]
+    )
+    with (
+        _patch_import(),
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+    ):
+        await coord.async_refresh()
+    assert coord.last_update_stale is True
+    assert coord.last_update_success is True
+
+
+@pytest.mark.asyncio
+async def test_history_grace_returns_full_cached_dict_when_second_serial_fails(
+    hass: HomeAssistant,
+) -> None:
+    """Grace is a whole-update decision, not per-serial partial data.
+
+    Serial A succeeds with a new session while serial B fails transiently
+    (after retry); the graced result must be the *previous* full cached dict
+    for *both* serials — A's new session must not leak into ``coord.data``.
+    """
+    from aioratio.exceptions import RatioApiError
+
+    serial_a, serial_b = "S_A", "S_B"
+    entry = _make_entry(hass, entry_id="e_multi")
+    main = _make_main_coordinator([serial_a, serial_b])
+    client = MagicMock()
+
+    sa1 = _session("a-1", serial_a, 1_700_000_000, energy=1000)
+    sb1 = _session("b-1", serial_b, 1_700_000_000, energy=1000)
+    sa2 = _session("a-2", serial_a, 1_700_010_000, energy=1000)
+
+    queues: dict[str, list[Any]] = {
+        serial_a: [
+            SessionHistoryPage(sessions=[sa1], next_token=None),
+            SessionHistoryPage(sessions=[sa2], next_token=None),
+        ],
+        serial_b: [
+            SessionHistoryPage(sessions=[sb1], next_token=None),
+            RatioApiError("boom1", status=500),
+            RatioApiError("boom2", status=500),
+        ],
+    }
+
+    def _session_history_side_effect(**kwargs: Any) -> SessionHistoryPage:
+        item = queues[kwargs["serial_number"]].pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    client.session_history = AsyncMock(side_effect=_session_history_side_effect)
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+    cached = coord.data
+    assert set(cached.keys()) == {serial_a, serial_b}
+    assert [s.session_id for s in cached[serial_a]] == ["a-1"]
+    assert [s.session_id for s in cached[serial_b]] == ["b-1"]
+
+    with (
+        _patch_import(),
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+    ):
+        await coord.async_refresh()
+
+    assert coord.last_update_success is True
+    assert coord.last_update_stale is True
+    assert coord.data is cached
+    assert [s.session_id for s in coord.data[serial_a]] == ["a-1"]
+    assert [s.session_id for s in coord.data[serial_b]] == ["b-1"]
+
+
+@pytest.mark.asyncio
+async def test_history_grace_does_not_lose_earlier_serial_sessions_on_recovery(
+    hass: HomeAssistant,
+) -> None:
+    """Issue #88 two-phase fix: a later serial's graced failure must not
+    strand an earlier serial's already-fetched-but-unprocessed session.
+
+    Serial A (earlier in iteration order) fetches a new session (a-2) in the
+    same cycle serial B fails transiently twice and triggers grace. Because
+    fetch and processing must be two separate phases, A's a-2 must not be
+    imported, deduped, or surfaced during the graced cycle -- it must be
+    fetched and processed again, exactly once, on the next successful cycle.
+    """
+    from aioratio.exceptions import RatioApiError
+
+    serial_a, serial_b = "S_A", "S_B"
+    entry = _make_entry(hass, entry_id="e_recovery")
+    main = _make_main_coordinator([serial_a, serial_b])
+    client = MagicMock()
+
+    sa1 = _session("a-1", serial_a, 1_700_000_000, energy=1000)
+    sb1 = _session("b-1", serial_b, 1_700_000_000, energy=1000)
+    sa2 = _session("a-2", serial_a, 1_700_010_000, energy=1000)
+
+    queues: dict[str, list[Any]] = {
+        serial_a: [
+            SessionHistoryPage(sessions=[sa1], next_token=None),  # cycle 1
+            SessionHistoryPage(sessions=[sa2], next_token=None),  # cycle 2 (graced)
+            SessionHistoryPage(sessions=[sa2], next_token=None),  # cycle 3 (recovery)
+        ],
+        serial_b: [
+            SessionHistoryPage(sessions=[sb1], next_token=None),  # cycle 1
+            RatioApiError("boom1", status=500),  # cycle 2, first attempt
+            RatioApiError("boom2", status=500),  # cycle 2, retry
+            SessionHistoryPage(
+                sessions=[sb1], next_token=None
+            ),  # cycle 3, known/cached
+        ],
+    }
+
+    def _session_history_side_effect(**kwargs: Any) -> SessionHistoryPage:
+        item = queues[kwargs["serial_number"]].pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    client.session_history = AsyncMock(side_effect=_session_history_side_effect)
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with (
+        _patch_import() as mock_import,
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+    ):
+        # Cycle 1: both serials succeed, establishing the cached baseline.
+        await coord.async_config_entry_first_refresh()
+        cached = coord.data
+        assert [s.session_id for s in cached[serial_a]] == ["a-1"]
+        assert [s.session_id for s in cached[serial_b]] == ["b-1"]
+
+        # Cycle 2: A fetches a-2 successfully; B fails transiently twice and
+        # is graced. Two-phase fix: A's fetch must not be processed either.
+        await coord.async_refresh()
+        assert coord.last_update_success is True
+        assert coord.last_update_stale is True
+        assert coord.data is cached
+        assert [s.session_id for s in coord.data[serial_a]] == ["a-1"]
+        assert "a-2" not in coord._seen_ids.get(serial_a, [])
+        assert not any(
+            call.args[2] and call.args[2][0].session_id == "a-2"
+            for call in mock_import.await_args_list
+        )
+
+        # Cycle 3: recovery. A re-fetches a-2 (overlap window); B returns its
+        # already-known session b-1 (no-op dedup).
+        await coord.async_refresh()
+
+    assert coord.last_update_success is True
+    assert coord.last_update_stale is False
+    assert [s.session_id for s in coord.data[serial_a]] == ["a-1", "a-2"]
+
+    a2_imports = [
+        call
+        for call in mock_import.await_args_list
+        if call.args[2] and any(s.session_id == "a-2" for s in call.args[2])
+    ]
+    assert len(a2_imports) == 1
+
+
+@pytest.mark.asyncio
+async def test_history_rate_limit_not_retried_not_graced(hass: HomeAssistant) -> None:
+    """A rate-limit error is never retried and never graced, even with cached data."""
+    from aioratio.exceptions import RatioRateLimitError
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    serial = "S_RATE"
+    entry = _make_entry(hass, entry_id="e_rate")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+    assert coord.last_update_stale is False
+
+    client.session_history = AsyncMock(
+        side_effect=RatioRateLimitError("slow", status=429)
+    )
+    with (
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+        pytest.raises(UpdateFailed),
+    ):
+        await coord._async_update_data()
+
+    assert client.session_history.await_count == 1
+    mock_sleep.assert_not_awaited()
+    assert coord.last_update_stale is False
+
+
+@pytest.mark.asyncio
+async def test_history_auth_error_not_retried_not_graced(hass: HomeAssistant) -> None:
+    """An auth error is never retried and never graced, even with cached data."""
+    from aioratio.exceptions import RatioAuthError
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    serial = "S_AUTH"
+    entry = _make_entry(hass, entry_id="e_auth")
+    main = _make_main_coordinator([serial])
+    client = MagicMock()
+
+    s1 = _session("id-1", serial, 1_700_000_000, energy=1000)
+    client.session_history = AsyncMock(
+        return_value=SessionHistoryPage(sessions=[s1], next_token=None)
+    )
+    coord = RatioHistoryCoordinator(hass, client, entry, main)
+
+    with _patch_import():
+        await coord.async_config_entry_first_refresh()
+
+    client.session_history = AsyncMock(side_effect=RatioAuthError("expired"))
+    with (
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+        pytest.raises(ConfigEntryAuthFailed),
+    ):
+        await coord._async_update_data()
+
+    assert client.session_history.await_count == 1
+    mock_sleep.assert_not_awaited()

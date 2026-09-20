@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -619,3 +620,281 @@ async def test_unloading_the_entry_cancels_a_pending_settle_refresh(
     await hass.async_block_till_done()
 
     assert coord._settle_unsub is None
+
+
+# ---------------------------------------------------------------------------
+# Transient 5xx / connection-error grace on chargers_overview (issue #88)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_overview_5xx_retries_once_then_succeeds(hass: HomeAssistant) -> None:
+    """A single 5xx is retried once after a jittered sleep, then succeeds."""
+    from aioratio.exceptions import RatioApiError
+
+    client = _make_full_client()
+    client.chargers_overview = AsyncMock(
+        side_effect=[RatioApiError("boom", status=500), [_overview("ABC123")]]
+    )
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+
+    with patch(
+        "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+    ) as mock_sleep:
+        await coord.async_refresh()
+
+    assert coord.last_update_success is True
+    assert coord.last_update_stale is False
+    assert "ABC123" in coord.data.chargers
+    mock_sleep.assert_awaited_once()
+    delay = mock_sleep.call_args.args[0]
+    assert 1 <= delay <= 3
+
+
+@pytest.mark.asyncio
+async def test_overview_connection_error_retries_once_then_succeeds(
+    hass: HomeAssistant,
+) -> None:
+    """A single connection error is retried once after a jittered sleep."""
+    from aioratio.exceptions import RatioConnectionError
+
+    client = _make_full_client()
+    client.chargers_overview = AsyncMock(
+        side_effect=[RatioConnectionError("timeout"), [_overview("ABC123")]]
+    )
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+
+    with patch(
+        "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+    ) as mock_sleep:
+        await coord.async_refresh()
+
+    assert coord.last_update_success is True
+    assert coord.last_update_stale is False
+    assert "ABC123" in coord.data.chargers
+    mock_sleep.assert_awaited_once()
+    delay = mock_sleep.call_args.args[0]
+    assert 1 <= delay <= 3
+
+
+@pytest.mark.asyncio
+async def test_overview_5xx_twice_with_cached_data_grants_grace(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """5xx on both the try and the retry, with cached data, is graced once."""
+    from aioratio.exceptions import RatioApiError
+
+    client = _make_full_client()
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+    await coord.async_config_entry_first_refresh()
+    cached = coord.data
+
+    client.chargers_overview = AsyncMock(
+        side_effect=[
+            RatioApiError("boom", status=502),
+            RatioApiError("boom again", status=502),
+        ]
+    )
+
+    with (
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+        caplog.at_level(logging.WARNING),
+    ):
+        await coord.async_refresh()
+
+    assert coord.last_update_success is True
+    assert coord.last_update_stale is True
+    assert coord.data is cached
+    assert any(
+        record.levelno == logging.WARNING and "boom again" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_overview_5xx_second_consecutive_graced_cycle_fails(
+    hass: HomeAssistant,
+) -> None:
+    """A second consecutive graced cycle raises UpdateFailed as today."""
+    from aioratio.exceptions import RatioApiError
+
+    client = _make_full_client()
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+    await coord.async_config_entry_first_refresh()
+
+    client.chargers_overview = AsyncMock(
+        side_effect=[RatioApiError("1", status=500), RatioApiError("2", status=500)]
+    )
+    with patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()):
+        await coord.async_refresh()  # first graced cycle
+    assert coord.last_update_success is True
+    assert coord.last_update_stale is True
+
+    client.chargers_overview = AsyncMock(
+        side_effect=[RatioApiError("3", status=500), RatioApiError("4", status=500)]
+    )
+    with patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()):
+        await coord.async_refresh()  # second consecutive failure — no more grace
+
+    assert coord.last_update_success is False
+
+
+@pytest.mark.asyncio
+async def test_overview_5xx_twice_with_no_data_raises_update_failed(
+    hass: HomeAssistant,
+) -> None:
+    """No grace at startup: a fresh coordinator with no cached data fails."""
+    from aioratio.exceptions import RatioApiError
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    client = _make_full_client()
+    client.chargers_overview = AsyncMock(
+        side_effect=[RatioApiError("1", status=500), RatioApiError("2", status=500)]
+    )
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+
+    with (
+        patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()),
+        pytest.raises(UpdateFailed),
+    ):
+        await coord._async_update_data()
+
+
+@pytest.mark.asyncio
+async def test_overview_grace_then_success_then_grace_again(
+    hass: HomeAssistant,
+) -> None:
+    """Grace resets on a genuine success and can be granted again next time."""
+    from aioratio.exceptions import RatioApiError
+
+    client = _make_full_client()
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+    await coord.async_config_entry_first_refresh()
+
+    client.chargers_overview = AsyncMock(
+        side_effect=[RatioApiError("1", status=500), RatioApiError("2", status=500)]
+    )
+    with patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()):
+        await coord.async_refresh()
+    assert coord.last_update_stale is True
+    assert coord.last_update_success is True
+
+    client.chargers_overview = AsyncMock(return_value=[_overview("ABC123")])
+    await coord.async_refresh()
+    assert coord.last_update_stale is False
+    assert coord.last_update_success is True
+
+    client.chargers_overview = AsyncMock(
+        side_effect=[RatioApiError("3", status=500), RatioApiError("4", status=500)]
+    )
+    with patch("custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()):
+        await coord.async_refresh()
+    assert coord.last_update_stale is True
+    assert coord.last_update_success is True
+
+
+@pytest.mark.asyncio
+async def test_overview_4xx_raises_update_failed_no_retry(hass: HomeAssistant) -> None:
+    """A 4xx status is never retried and never graced."""
+    from aioratio.exceptions import RatioApiError
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    client = _make_full_client()
+    client.chargers_overview = AsyncMock(side_effect=RatioApiError("nope", status=404))
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+
+    with (
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+        pytest.raises(UpdateFailed),
+    ):
+        await coord._async_update_data()
+
+    assert client.chargers_overview.await_count == 1
+    mock_sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_overview_api_error_status_none_raises_update_failed_no_retry(
+    hass: HomeAssistant,
+) -> None:
+    """A status-less API error is never retried."""
+    from aioratio.exceptions import RatioApiError
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    client = _make_full_client()
+    client.chargers_overview = AsyncMock(side_effect=RatioApiError("unknown"))
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+
+    with (
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+        pytest.raises(UpdateFailed),
+    ):
+        await coord._async_update_data()
+
+    assert client.chargers_overview.await_count == 1
+    mock_sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_overview_auth_error_raises_config_entry_auth_failed_no_retry(
+    hass: HomeAssistant,
+) -> None:
+    """Auth errors are unchanged: no retry, no grace."""
+    from aioratio.exceptions import RatioAuthError
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    client = _make_full_client()
+    client.chargers_overview = AsyncMock(side_effect=RatioAuthError("expired"))
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+
+    with (
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+        pytest.raises(ConfigEntryAuthFailed),
+    ):
+        await coord._async_update_data()
+
+    assert client.chargers_overview.await_count == 1
+    mock_sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [429, 503])
+async def test_overview_rate_limit_raises_update_failed_no_retry(
+    hass: HomeAssistant, status: int
+) -> None:
+    """Rate limits are never retried, even a 503-flavoured one (ordering guard)."""
+    from aioratio.exceptions import RatioRateLimitError
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    client = _make_full_client()
+    client.chargers_overview = AsyncMock(
+        side_effect=RatioRateLimitError("slow", status=status)
+    )
+    entry = _make_entry(hass)
+    coord = RatioCoordinator(hass, client, entry)
+
+    with (
+        patch(
+            "custom_components.ratio.coordinator.asyncio.sleep", new=AsyncMock()
+        ) as mock_sleep,
+        pytest.raises(UpdateFailed),
+    ):
+        await coord._async_update_data()
+
+    assert client.chargers_overview.await_count == 1
+    mock_sleep.assert_not_awaited()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime as _datetime_type
@@ -57,6 +58,84 @@ from .statistics import (
 _LOGGER = logging.getLogger(__name__)
 
 
+def _is_transient(err: Exception) -> bool:
+    """Whether ``err`` is a connection error or a 5xx API error worth retrying.
+
+    ``RatioRateLimitError`` is a subclass of ``RatioApiError`` but is
+    deliberately excluded even when it carries a 5xx-flavoured status — rate
+    limiting has its own backoff handling and must never be retried here.
+    """
+    if isinstance(err, RatioConnectionError):
+        return True
+    if isinstance(err, RatioRateLimitError):
+        return False
+    return (
+        isinstance(err, RatioApiError) and err.status is not None and err.status >= 500
+    )
+
+
+async def _retry_once[T](fetch: Callable[[], Awaitable[T]]) -> T:
+    """Attempt ``fetch``; on a transient error, sleep jittered and try once more.
+
+    The second attempt's error (transient or not) propagates to the caller.
+    """
+    try:
+        return await fetch()
+    except (RatioConnectionError, RatioApiError) as err:
+        if not _is_transient(err):
+            raise
+        await asyncio.sleep(random.uniform(1, 3))
+        return await fetch()
+
+
+class _TransientGraceMixin:
+    """Issue #88: suppress a single consecutive transient update failure.
+
+    ``last_update_stale`` is read by number entities (#69 guard) so a graced
+    cycle, which carries no fresh cloud read, does not clear their pending
+    post-write target. Grace is granted at
+    most once per consecutive run of transient failures — a failure that
+    follows an already-graced one raises ``UpdateFailed`` as usual, so a
+    genuine outage still surfaces. ``_note_success`` resets the counter and
+    records the timestamp used to report cache age in the warning log.
+    """
+
+    last_update_stale: bool
+    _grace_count: int
+    _last_success: _datetime_type | None
+
+    def _init_grace(self) -> None:
+        """Initialise grace state. Call from each subclass's ``__init__``."""
+        self.last_update_stale = False
+        self._grace_count = 0
+        self._last_success = None
+
+    def _note_success(self) -> None:
+        """Record a successful update, resetting the grace counter."""
+        self._grace_count = 0
+        self.last_update_stale = False
+        self._last_success = dt_util.utcnow()
+
+    def _try_grace(self, what: str, err: Exception, cached: object | None) -> bool:
+        """Return True if this failure is graced (caller must return its cached data)."""
+        if cached is None or not _is_transient(err) or self._grace_count != 0:
+            return False
+        self._grace_count += 1
+        self.last_update_stale = True
+        age = (
+            dt_util.utcnow() - self._last_success
+            if self._last_success is not None
+            else None
+        )
+        _LOGGER.warning(
+            "%s failed after retry, using cached data (age: %s): %s",
+            what,
+            age,
+            err,
+        )
+        return True
+
+
 @dataclass
 class RatioData:
     """Aggregate state cached by the coordinator each cycle."""
@@ -70,7 +149,7 @@ class RatioData:
     cpms_options: dict[str, list[CpmsConfig]] = field(default_factory=dict)
 
 
-class RatioCoordinator(DataUpdateCoordinator[RatioData]):
+class RatioCoordinator(_TransientGraceMixin, DataUpdateCoordinator[RatioData]):
     """Coordinator that polls the Ratio cloud for charger state, settings, and vehicles."""
 
     def __init__(
@@ -97,6 +176,10 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
         self._prefs_lock = asyncio.Lock()
         # Track last CPMS fetch time; refresh at most every 10 minutes.
         self._cpms_last_fetch: _datetime_type | None = None
+        # Issue #88: grace a single consecutive transient chargers_overview
+        # failure (after its own retry) by returning cached data instead of
+        # flipping every entity to unavailable for one poll.
+        self._init_grace()
         # Pending post-write settle refresh, if any. See POST_WRITE_SETTLE_SECONDS.
         self._settle_unsub: CALLBACK_TYPE | None = None
         self._prefs_store: Store[dict[str, Any]] = Store(
@@ -160,14 +243,20 @@ class RatioCoordinator(DataUpdateCoordinator[RatioData]):
     async def _async_update_data(self) -> RatioData:
         """Fetch chargers, then per-charger user/solar settings + vehicles in parallel."""
         try:
-            overviews = await self.client.chargers_overview()
+            overviews = await _retry_once(self.client.chargers_overview)
         except RatioAuthError as err:
             raise ConfigEntryAuthFailed(str(err)) from err
         except RatioRateLimitError as err:
             # Subclass of RatioApiError — must be caught first.
             raise UpdateFailed(f"rate limited; backing off: {err}") from err
         except (RatioConnectionError, RatioApiError) as err:
+            # Issue #88: a transient failure that survives the retry above is
+            # graced for one cycle (cached data kept, entities stay available).
+            if self._try_grace("chargers_overview", err, self.data):
+                return self.data
             raise UpdateFailed(str(err)) from err
+
+        self._note_success()
 
         chargers = {ov.serial_number: ov for ov in overviews}
         prev: RatioData | None = self.data
@@ -430,7 +519,9 @@ def _session_begin(session: Session) -> int:
     return 0
 
 
-class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
+class RatioHistoryCoordinator(
+    _TransientGraceMixin, DataUpdateCoordinator[dict[str, list[Session]]]
+):
     """Polls the Ratio cloud for completed charge sessions and feeds external statistics.
 
     Keyed by charger serial; values are lists of recent ``Session`` objects sorted by
@@ -477,6 +568,10 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
         # One-shot recovery is deferred until the first poll (background task)
         # so config-entry setup is not blocked by a cloud fetch.
         self._recovery_attempted = False
+        # Issue #88: grace a single consecutive transient session_history
+        # failure (after its own retry) by returning the cached sessions dict
+        # instead of flipping statistics/last-session sensors unavailable.
+        self._init_grace()
 
     async def async_load(self) -> None:
         """Hydrate persisted pagination + dedup + running-total state from disk."""
@@ -749,14 +844,29 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
             self._recovery_attempted = True
 
         now_ts = int(dt_util.utcnow().timestamp())
-        result: dict[str, list[Session]] = {}
+
+        # Phase 1: fetch every serial before processing any of them. Issue
+        # #88: if a later serial's fetch fails and is graced (or raises
+        # UpdateFailed), no earlier serial may have already had its
+        # statistics imported or its cursor/seen-ids advanced in memory --
+        # otherwise that mutation survives even though ``self.data`` (and the
+        # persisted store) is left holding the old, pre-cycle result, and the
+        # earlier serial's new session is silently dropped on the next
+        # successful cycle (it's in ``_seen_ids`` but not in ``self.data``).
+        # So fetching is fully separated from processing: the only in-memory
+        # write in this loop is the recorder seeding below, which is derived
+        # from the recorder alone (never from anything fetched this cycle).
+        fetch_results: dict[str, tuple[list[Session], int | None]] = {}
 
         for serial in serials:
             # Seed before computing the fetch window, so the window itself is
             # already correct. A remove-and-re-add wipes the whole per-entry_id
             # store while the per-serial recorder series survives (issue #84):
             # without this the poll would refetch HISTORY_BACKFILL_DAYS of
-            # already-imported sessions and rewrite their rows.
+            # already-imported sessions and rewrite their rows. Safe to do
+            # here in the fetch phase even if a later serial's fetch fails
+            # this cycle: it is derived straight from the recorder, not from
+            # anything fetched this cycle, and idempotent to repeat.
             seeded_hour_ts: int | None = None
             if (
                 serial not in self._running_total
@@ -786,15 +896,35 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
                     )
 
             begin_time = self._begin_time_for(serial, now_ts)
+
+            async def _fetch(
+                serial: str = serial, begin_time: int = begin_time
+            ) -> list[Session]:
+                return await self._fetch_all_pages(serial, begin_time)
+
             try:
-                fetched = await self._fetch_all_pages(serial, begin_time)
+                fetched = await _retry_once(_fetch)
             except RatioAuthError as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
             except RatioRateLimitError as err:
                 raise UpdateFailed(f"rate limited; backing off: {err}") from err
             except (RatioConnectionError, RatioApiError) as err:
+                # Issue #88: grace a transient failure for one whole cycle,
+                # same as the main coordinator. Fetching and processing are
+                # split into two phases, so nothing fetched this cycle has
+                # been imported, surfaced, or persisted for any serial and
+                # there is nothing to undo here.
+                if self._try_grace("session_history", err, self.data):
+                    return self.data
                 raise UpdateFailed(str(err)) from err
 
+            fetch_results[serial] = (fetched, seeded_hour_ts)
+
+        # Phase 2: process every successfully fetched serial. Reaching this
+        # point means every serial's fetch above succeeded.
+        result: dict[str, list[Session]] = {}
+
+        for serial, (fetched, seeded_hour_ts) in fetch_results.items():
             seen = set(self._seen_ids.get(serial, []))
             new_sessions: list[Session] = []
             for s in fetched:
@@ -876,5 +1006,6 @@ class RatioHistoryCoordinator(DataUpdateCoordinator[dict[str, list[Session]]]):
             merged = sorted(unique.values(), key=_session_begin)
             result[serial] = merged[-DEDUP_ID_LIMIT:]
 
+        self._note_success()
         await self._async_save(result)
         return result
